@@ -1,0 +1,8 @@
+- Use node >= 25
+- follow SOLID principles
+- follow don't repeat yourself (DRY) principle
+- write clean and maintainable code
+- use TDD (Test Driven Development) approach
+- don't swallow errors, handle them properly
+- enable strict mode in JavaScript
+- enrich logging with contextual information
