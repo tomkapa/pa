@@ -4,5 +4,5 @@
 - write clean and maintainable code
 - use TDD (Test Driven Development) approach
 - don't swallow errors, handle them properly
-- enable strict mode in JavaScript
+- use strict typing with TypeScript
 - enrich logging with contextual information
