@@ -7,7 +7,5 @@ export type {
   QueryDeps,
   Terminal,
   TerminalReason,
-  ToolResult,
-  ToolUseContext,
   ToolUseInfo,
 } from './types.js'

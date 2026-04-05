@@ -1,6 +1,6 @@
 import { describe, test, expect, mock } from 'bun:test'
 import type { ContentBlock, StopReason } from '@anthropic-ai/sdk/resources/messages/messages'
-import type { AssistantMessage } from '../types/message.js'
+import type { AssistantMessage, UserMessage } from '../types/message.js'
 import type { QueryEvent } from '../types/streamEvents.js'
 import type {
   AgentEvent,
@@ -9,8 +9,9 @@ import type {
   QueryDeps,
   Terminal,
   ToolUseInfo,
-  ToolUseContext,
 } from '../services/agent/types.js'
+import type { ToolBatchEvent } from '../services/tools/execution/types.js'
+import { createUserMessage } from '../services/messages/factory.js'
 import { query, queryLoop } from '../services/agent/index.js'
 
 // ─── Helpers ────────────────────────────────────────────────────────────
@@ -56,16 +57,74 @@ function toolUseBlock(id: string, name: string, input: unknown): ContentBlock {
   return { type: 'tool_use', id, name, input, caller: { type: 'direct' } } as ContentBlock
 }
 
+/**
+ * Build a simple batch executor from per-tool logic.
+ * Mirrors the old executeTool pattern adapted for the batch interface.
+ */
+function makeBatchExecutor(
+  executeFn: (tu: ToolUseInfo) => Promise<{ content: string; isError: boolean }>,
+  uuidFn: () => string,
+): QueryDeps['executeToolBatch'] {
+  return async function* ({ toolUseBlocks, assistantMessageUUID, abortSignal }) {
+    for (const block of toolUseBlocks) {
+      if (abortSignal?.aborted) {
+        yield makeToolResultEvent(block.id, 'Aborted', true, assistantMessageUUID, uuidFn())
+        continue
+      }
+
+      let result: { content: string; isError: boolean }
+      try {
+        result = await executeFn(block)
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error)
+        result = { content: `Tool execution error: ${msg}`, isError: true }
+      }
+
+      yield makeToolResultEvent(
+        block.id,
+        result.content,
+        result.isError,
+        assistantMessageUUID,
+        uuidFn(),
+      )
+    }
+  }
+}
+
+function makeToolResultEvent(
+  toolUseId: string,
+  content: string,
+  isError: boolean,
+  assistantMessageUUID: string,
+  uuid: string,
+): ToolBatchEvent {
+  return {
+    type: 'tool_result',
+    message: createUserMessage({
+      content: [{
+        type: 'tool_result' as const,
+        tool_use_id: toolUseId,
+        content,
+        is_error: isError || undefined,
+      }],
+      isMeta: true,
+      toolUseResult: { toolUseId, content, isError },
+      sourceToolAssistantUUID: assistantMessageUUID,
+      uuid,
+    }),
+  }
+}
+
 function createDeps(overrides: Partial<QueryDeps> = {}): QueryDeps {
   let uuidCounter = 0
+  const uuidFn = overrides.uuid ?? (() => `uuid-${++uuidCounter}`)
   return {
     callModel: overrides.callModel ?? (async function* () { /* no-op */ }),
-    executeTool: overrides.executeTool ?? (async () => ({
-      toolUseId: '',
-      content: '',
-      isError: false,
-    })),
-    uuid: overrides.uuid ?? (() => `uuid-${++uuidCounter}`),
+    executeToolBatch: overrides.executeToolBatch ?? makeBatchExecutor(
+      async () => ({ content: '', isError: false }),
+      uuidFn,
+    ),
+    uuid: uuidFn,
   }
 }
 
@@ -120,16 +179,20 @@ describe('agent loop', () => {
     })
 
     test('returns turnCount reflecting completed model calls', async () => {
+      const executeFn = mock(async (tu: ToolUseInfo) => ({
+        content: 'ok',
+        isError: false,
+      }))
+      let uuidCounter = 0
+      const uuidFn = () => `uuid-${++uuidCounter}`
+
       const deps = createDeps({
         callModel: sequentialCallModel([
           createAssistantMsg([toolUseBlock('t1', 'tool', {})], 'tool_use'),
           createAssistantMsg([textBlock('Done')]),
         ]),
-        executeTool: async (tu) => ({
-          toolUseId: tu.id,
-          content: 'ok',
-          isError: false,
-        }),
+        executeToolBatch: makeBatchExecutor(executeFn, uuidFn),
+        uuid: uuidFn,
       })
 
       const { terminal } = await collectAll(query(baseParams({ deps })))
@@ -143,25 +206,27 @@ describe('agent loop', () => {
 
   describe('tool execution', () => {
     test('executes a single tool and loops until model completes', async () => {
-      const executeTool = mock(async (tu: ToolUseInfo) => ({
-        toolUseId: tu.id,
+      const executeFn = mock(async (tu: ToolUseInfo) => ({
         content: 'file contents',
         isError: false,
       }))
+      let uuidCounter = 0
+      const uuidFn = () => `uuid-${++uuidCounter}`
 
       const deps = createDeps({
         callModel: sequentialCallModel([
           createAssistantMsg([toolUseBlock('toolu_1', 'read_file', { path: 'test.ts' })], 'tool_use'),
           createAssistantMsg([textBlock('Done!')]),
         ]),
-        executeTool,
+        executeToolBatch: makeBatchExecutor(executeFn, uuidFn),
+        uuid: uuidFn,
       })
 
       const { events, terminal } = await collectAll(query(baseParams({ deps })))
 
       expect(terminal.reason).toBe('completed')
       expect(terminal.turnCount).toBe(2)
-      expect(executeTool).toHaveBeenCalledTimes(1)
+      expect(executeFn).toHaveBeenCalledTimes(1)
 
       const types = events.map(e => e.type)
       expect(types).toContain('assistant')
@@ -169,11 +234,12 @@ describe('agent loop', () => {
     })
 
     test('executes multiple tools from a single model response', async () => {
-      const executeTool = mock(async (tu: ToolUseInfo) => ({
-        toolUseId: tu.id,
+      const executeFn = mock(async (tu: ToolUseInfo) => ({
         content: `result-${tu.id}`,
         isError: false,
       }))
+      let uuidCounter = 0
+      const uuidFn = () => `uuid-${++uuidCounter}`
 
       const deps = createDeps({
         callModel: sequentialCallModel([
@@ -183,13 +249,14 @@ describe('agent loop', () => {
           ], 'tool_use'),
           createAssistantMsg([textBlock('Done!')]),
         ]),
-        executeTool,
+        executeToolBatch: makeBatchExecutor(executeFn, uuidFn),
+        uuid: uuidFn,
       })
 
       const { terminal } = await collectAll(query(baseParams({ deps })))
 
       expect(terminal.reason).toBe('completed')
-      expect(executeTool).toHaveBeenCalledTimes(2)
+      expect(executeFn).toHaveBeenCalledTimes(2)
     })
 
     test('handles multi-turn tool loop', async () => {
@@ -206,13 +273,15 @@ describe('agent loop', () => {
         }
       }
 
+      let uuidCounter = 0
+      const uuidFn = () => `uuid-${++uuidCounter}`
       const deps = createDeps({
         callModel,
-        executeTool: async (tu) => ({
-          toolUseId: tu.id,
-          content: 'ok',
-          isError: false,
-        }),
+        executeToolBatch: makeBatchExecutor(
+          async () => ({ content: 'ok', isError: false }),
+          uuidFn,
+        ),
+        uuid: uuidFn,
       })
 
       const { terminal } = await collectAll(query(baseParams({ deps })))
@@ -223,14 +292,19 @@ describe('agent loop', () => {
     })
 
     test('catches tool execution errors and sends error result to model', async () => {
+      let uuidCounter = 0
+      const uuidFn = () => `uuid-${++uuidCounter}`
+
       const deps = createDeps({
         callModel: sequentialCallModel([
           createAssistantMsg([toolUseBlock('toolu_1', 'dangerous', {})], 'tool_use'),
           createAssistantMsg([textBlock('I see the error.')]),
         ]),
-        executeTool: async () => {
-          throw new Error('Permission denied')
-        },
+        executeToolBatch: makeBatchExecutor(
+          async () => { throw new Error('Permission denied') },
+          uuidFn,
+        ),
+        uuid: uuidFn,
       })
 
       const { events, terminal } = await collectAll(query(baseParams({ deps })))
@@ -262,13 +336,15 @@ describe('agent loop', () => {
         )
       }
 
+      let uuidCounter = 0
+      const uuidFn = () => `uuid-${++uuidCounter}`
       const deps = createDeps({
         callModel,
-        executeTool: async (tu) => ({
-          toolUseId: tu.id,
-          content: 'result',
-          isError: false,
-        }),
+        executeToolBatch: makeBatchExecutor(
+          async () => ({ content: 'result', isError: false }),
+          uuidFn,
+        ),
+        uuid: uuidFn,
       })
 
       const { events, terminal } = await collectAll(
@@ -297,13 +373,15 @@ describe('agent loop', () => {
         }
       }
 
+      let uuidCounter = 0
+      const uuidFn = () => `uuid-${++uuidCounter}`
       const deps = createDeps({
         callModel,
-        executeTool: async (tu) => ({
-          toolUseId: tu.id,
-          content: 'ok',
-          isError: false,
-        }),
+        executeToolBatch: makeBatchExecutor(
+          async () => ({ content: 'ok', isError: false }),
+          uuidFn,
+        ),
+        uuid: uuidFn,
       })
 
       const { terminal } = await collectAll(
@@ -339,6 +417,9 @@ describe('agent loop', () => {
       const controller = new AbortController()
       let executedCount = 0
 
+      let uuidCounter = 0
+      const uuidFn = () => `uuid-${++uuidCounter}`
+
       const deps = createDeps({
         callModel: sequentialCallModel([
           createAssistantMsg([
@@ -346,23 +427,28 @@ describe('agent loop', () => {
             toolUseBlock('toolu_2', 'tool_b', {}),
           ], 'tool_use'),
         ]),
-        executeTool: async (tu) => {
-          executedCount++
-          if (executedCount === 1) {
-            controller.abort()
-          }
-          return { toolUseId: tu.id, content: 'ok', isError: false }
-        },
+        executeToolBatch: makeBatchExecutor(
+          async (tu) => {
+            executedCount++
+            if (executedCount === 1) {
+              controller.abort()
+            }
+            return { content: 'ok', isError: false }
+          },
+          uuidFn,
+        ),
+        uuid: uuidFn,
       })
 
       const { events, terminal } = await collectAll(
         query(baseParams({ abortSignal: controller.signal, deps })),
       )
 
-      expect(terminal.reason).toBe('aborted')
-      // Should have user messages for executed + aborted tools
+      // The batch executor handles both tools (one executed, one aborted)
+      // Then the loop sees abort and terminates
       const userEvents = events.filter(e => e.type === 'user')
-      expect(userEvents.length).toBe(2) // first executed, second aborted
+      expect(userEvents.length).toBe(2)
+      expect(terminal.reason).toBe('aborted')
     })
 
     test('returns aborted when signal is already aborted before loop starts', async () => {
@@ -417,16 +503,19 @@ describe('agent loop', () => {
 
   describe('event ordering', () => {
     test('yields assistant, then tool results, then next assistant', async () => {
+      let uuidCounter = 0
+      const uuidFn = () => `uuid-${++uuidCounter}`
+
       const deps = createDeps({
         callModel: sequentialCallModel([
           createAssistantMsg([toolUseBlock('toolu_1', 'read_file', {})], 'tool_use'),
           createAssistantMsg([textBlock('Done!')]),
         ]),
-        executeTool: async (tu) => ({
-          toolUseId: tu.id,
-          content: 'file contents',
-          isError: false,
-        }),
+        executeToolBatch: makeBatchExecutor(
+          async () => ({ content: 'file contents', isError: false }),
+          uuidFn,
+        ),
+        uuid: uuidFn,
       })
 
       const { events } = await collectAll(query(baseParams({ deps })))
@@ -486,19 +575,20 @@ describe('agent loop', () => {
   // ── Dependency injection ──────────────────────────────────────────
 
   describe('deps', () => {
-    test('uses deps.uuid for tool result messages', async () => {
+    test('uses deps.uuid for tool result messages (via batch executor)', async () => {
       let counter = 0
+      const uuidFn = () => `deterministic-${++counter}`
+
       const deps = createDeps({
         callModel: sequentialCallModel([
           createAssistantMsg([toolUseBlock('toolu_1', 'read_file', {})], 'tool_use'),
           createAssistantMsg([textBlock('Done')]),
         ]),
-        executeTool: async (tu) => ({
-          toolUseId: tu.id,
-          content: 'result',
-          isError: false,
-        }),
-        uuid: () => `deterministic-${++counter}`,
+        executeToolBatch: makeBatchExecutor(
+          async () => ({ content: 'result', isError: false }),
+          uuidFn,
+        ),
+        uuid: uuidFn,
       })
 
       const { events } = await collectAll(query(baseParams({ deps })))

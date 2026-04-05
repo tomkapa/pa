@@ -1,7 +1,8 @@
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages/messages'
 import type { AssistantMessage } from '../../types/message.js'
 import { normalizeMessagesForAPI } from '../messages/normalize.js'
-import { createSystemMessage, createUserMessage } from '../messages/factory.js'
+import { createSystemMessage } from '../messages/factory.js'
+import { getErrorMessage } from '../../utils/error.js'
 import type {
   AgentEvent,
   AgentQueryParams,
@@ -9,7 +10,6 @@ import type {
   ContentBlockParam,
   LoopState,
   Terminal,
-  ToolResult,
   ToolUseInfo,
 } from './types.js'
 
@@ -26,25 +26,6 @@ function isAbortError(error: unknown): boolean {
   return false
 }
 
-function buildToolResultUserMessage(
-  result: ToolResult,
-  sourceAssistantUUID: string,
-  uuid: string,
-) {
-  return createUserMessage({
-    content: [{
-      type: 'tool_result',
-      tool_use_id: result.toolUseId,
-      content: result.content,
-      is_error: result.isError || undefined,
-    }],
-    isMeta: true,
-    toolUseResult: result,
-    sourceToolAssistantUUID: sourceAssistantUUID,
-    uuid,
-  })
-}
-
 export async function* queryLoop(
   params: AgentQueryParams,
 ): AsyncGenerator<AgentEvent, Terminal> {
@@ -52,7 +33,6 @@ export async function* queryLoop(
 
   const state: LoopState = {
     messages: [...params.messages],
-    toolUseContext: params.toolUseContext ?? {},
     turnCount: 0,
   }
 
@@ -94,15 +74,15 @@ export async function* queryLoop(
         return { reason: 'aborted', turnCount: state.turnCount }
       }
 
-      const errorMessage = error instanceof Error ? error.message : String(error)
+      const msg = getErrorMessage(error)
       yield createSystemMessage({
         subtype: 'model_error',
-        content: `Model error: ${errorMessage}`,
+        content: `Model error: ${msg}`,
         level: 'error',
       })
       return {
         reason: 'model_error',
-        error: error instanceof Error ? error : new Error(errorMessage),
+        error: error instanceof Error ? error : new Error(msg),
         turnCount: state.turnCount,
       }
     }
@@ -126,42 +106,15 @@ export async function* queryLoop(
       return { reason: 'completed', turnCount: state.turnCount }
     }
 
-    for (let i = 0; i < toolUseBlocks.length; i++) {
-      const toolUse = toolUseBlocks[i]!
-
-      if (abortSignal?.aborted) {
-        for (let j = i; j < toolUseBlocks.length; j++) {
-          const remaining = toolUseBlocks[j]!
-          const errorMsg = buildToolResultUserMessage(
-            { toolUseId: remaining.id, content: 'Aborted', isError: true },
-            assistantMessage.uuid,
-            deps.uuid(),
-          )
-          yield errorMsg
-          state.messages.push(errorMsg)
-        }
-        return { reason: 'aborted', turnCount: state.turnCount }
+    for await (const event of deps.executeToolBatch({
+      toolUseBlocks,
+      assistantMessageUUID: assistantMessage.uuid,
+      abortSignal,
+    })) {
+      if (event.type === 'tool_result') {
+        yield event.message
+        state.messages.push(event.message)
       }
-
-      let result: ToolResult
-      try {
-        result = await deps.executeTool(toolUse, state.toolUseContext)
-      } catch (error: unknown) {
-        const errorMessage = error instanceof Error ? error.message : String(error)
-        result = {
-          toolUseId: toolUse.id,
-          content: `Tool execution error: ${errorMessage}`,
-          isError: true,
-        }
-      }
-
-      const userMsg = buildToolResultUserMessage(
-        result,
-        assistantMessage.uuid,
-        deps.uuid(),
-      )
-      yield userMsg
-      state.messages.push(userMsg)
     }
   }
 }
