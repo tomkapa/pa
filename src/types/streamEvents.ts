@@ -1,22 +1,16 @@
 import type {
-  Message,
   MessageDeltaUsage,
   RawMessageStreamEvent,
   Usage,
 } from '@anthropic-ai/sdk/resources/messages/messages'
+import type { AssistantMessage } from './message.js'
+
+export type { AssistantMessage }
 
 export interface StreamEvent {
   type: 'stream_event'
   event: RawMessageStreamEvent
   ttftMs?: number
-}
-
-export interface AssistantMessage {
-  type: 'assistant'
-  message: Message
-  uuid: string
-  timestamp: string
-  requestId?: string
 }
 
 export type QueryEvent = StreamEvent | AssistantMessage
