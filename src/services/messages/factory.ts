@@ -15,6 +15,7 @@ export interface CreateUserMessageParams {
   isMeta?: true
   toolUseResult?: unknown
   sourceToolAssistantUUID?: string
+  uuid?: string
 }
 
 export function createUserMessage(params: CreateUserMessageParams): UserMessage {
@@ -22,7 +23,7 @@ export function createUserMessage(params: CreateUserMessageParams): UserMessage 
 
   const msg: UserMessage = {
     type: 'user',
-    uuid: crypto.randomUUID(),
+    uuid: params.uuid ?? crypto.randomUUID(),
     timestamp: new Date().toISOString(),
     message: {
       role: 'user',
