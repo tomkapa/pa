@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 
 export interface ClientOptions {
   apiKey?: string
+  baseURL?: string
   maxRetries?: number
   timeoutMs?: number
 }
@@ -15,6 +16,7 @@ export function createAnthropicClient(options: ClientOptions = {}): Anthropic {
 
   return new Anthropic({
     apiKey: options.apiKey ?? process.env['ANTHROPIC_API_KEY'],
+    baseURL: options.baseURL ?? process.env['ANTHROPIC_BASE_URL'],
     maxRetries: options.maxRetries ?? DEFAULT_MAX_RETRIES,
     timeout: timeoutMs,
   })
