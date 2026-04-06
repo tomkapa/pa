@@ -15,8 +15,8 @@ import type {
   Tool,
   ToolDef,
   ToolUseContext,
-  PermissionResult,
 } from '../services/tools/types.js'
+import type { PermissionDecision } from '../services/permissions/types.js'
 import type {
   ToolUseBlock,
   ToolExecutionEvent,
@@ -103,10 +103,11 @@ function makeAssistantMessage(): AssistantMessage {
 }
 
 const defaultCanUseTool = async (
-  tool: Tool<unknown, unknown>,
+  _tool: Tool<unknown, unknown>,
   input: unknown,
-): Promise<PermissionResult> => ({
+): Promise<PermissionDecision> => ({
   behavior: 'allow',
+  reason: { type: 'default' },
   updatedInput: input,
 })
 
@@ -560,8 +561,9 @@ describe('runToolUse', () => {
     const context = makeContext([tool])
     const block = makeToolUseBlock('t1', 'Echo', { message: 'hello' })
 
-    const denyCanUseTool = async (): Promise<PermissionResult> => ({
+    const denyCanUseTool = async (): Promise<PermissionDecision> => ({
       behavior: 'deny',
+      reason: { type: 'toolSpecific', description: 'Not allowed' },
       message: 'Not allowed',
     })
 
@@ -583,8 +585,9 @@ describe('runToolUse', () => {
     const context = makeContext([tool])
     const block = makeToolUseBlock('t1', 'Echo', { message: 'hello' })
 
-    const askCanUseTool = async (): Promise<PermissionResult> => ({
+    const askCanUseTool = async (): Promise<PermissionDecision> => ({
       behavior: 'ask',
+      reason: { type: 'default' },
       message: 'Needs confirmation',
     })
 
@@ -688,9 +691,10 @@ describe('runToolUse', () => {
 
     const transformingCanUseTool = async (
       _tool: Tool<unknown, unknown>,
-      input: unknown,
-    ): Promise<PermissionResult> => ({
+      _input: unknown,
+    ): Promise<PermissionDecision> => ({
       behavior: 'allow',
+      reason: { type: 'default' },
       updatedInput: { message: 'transformed' },
     })
 

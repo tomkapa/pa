@@ -4,8 +4,9 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { z, type ZodType } from 'zod'
-import type { ToolDef, ToolResultBlockParam, ToolUseContext } from '../services/tools/types.js'
+import type { ToolDef, ToolResultBlockParam, ToolUseContext, PermissionResult } from '../services/tools/types.js'
 import { semanticNumber } from '../utils/schema.js'
+import { checkProtectedPath } from '../services/permissions/safety.js'
 
 // ---------------------------------------------------------------------------
 // Input / Output types
@@ -270,6 +271,10 @@ export function bashToolDef(): ToolDef<BashToolInput, BashToolOutput> {
 
     isReadOnly: () => false,
     isConcurrencySafe: () => false,
+
+    async checkPermissions(input): Promise<PermissionResult> {
+      return checkProtectedPath(input.command, 'Command')
+    },
 
     async prompt() {
       return (

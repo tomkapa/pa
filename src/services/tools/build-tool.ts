@@ -6,8 +6,8 @@ export function buildTool<Input, Output>(def: ToolDef<Input, Output>): Tool<Inpu
     isReadOnly: () => false,
     isConcurrencySafe: () => false,
     isEnabled: () => true,
-    checkPermissions: (input: Input) =>
-      Promise.resolve({ behavior: 'allow' as const, updatedInput: input }),
+    checkPermissions: () =>
+      Promise.resolve({ behavior: 'passthrough' as const }),
     userFacingName: () => def.name,
 
     // Definition overrides defaults

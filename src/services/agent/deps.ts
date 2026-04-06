@@ -5,9 +5,11 @@ import type { QueryDeps, CallModelParams, ToolUseInfo } from './types.js'
 import type { ToolBatchEvent, CanUseToolFn } from '../tools/execution/types.js'
 import type { Tool, ToolUseContext } from '../tools/types.js'
 import type { QueryEvent } from '../../types/streamEvents.js'
+import type { ToolPermissionContext } from '../permissions/types.js'
 import { queryWithStreaming } from '../api/query.js'
 import { runTools } from '../tools/execution/run-tools.js'
 import { toApiTools } from '../tools/to-api-tools.js'
+import { hasPermissionsToUseTool } from '../permissions/pipeline.js'
 
 export interface CreateQueryDepsOptions {
   client: Anthropic
@@ -15,19 +17,21 @@ export interface CreateQueryDepsOptions {
   maxTokens: number
   tools: Tool<unknown, unknown>[]
   abortController: AbortController
+  permissionContext: ToolPermissionContext
 }
 
-// S-011 replaces this with real permission checking
-const allowAllCanUseTool: CanUseToolFn = async (_tool, input) => ({
-  behavior: 'allow',
-  updatedInput: input,
-})
+function createCanUseTool(permissionCtx: ToolPermissionContext): CanUseToolFn {
+  return async (tool, input, toolUseCtx) =>
+    hasPermissionsToUseTool(tool, input, permissionCtx, toolUseCtx)
+}
 
 export function createQueryDeps(options: CreateQueryDepsOptions): QueryDeps {
-  const { client, model, maxTokens, tools, abortController } = options
+  const { client, model, maxTokens, tools, abortController, permissionContext } = options
 
   // Convert tool definitions once — reused across all turns in this query
   let apiToolsPromise: Promise<AnthropicTool[]> | undefined
+
+  const canUseTool = createCanUseTool(permissionContext)
 
   return {
     callModel(params: CallModelParams): AsyncGenerator<QueryEvent> {
@@ -35,7 +39,7 @@ export function createQueryDeps(options: CreateQueryDepsOptions): QueryDeps {
       return callModelImpl(client, model, maxTokens, params, apiToolsPromise)
     },
     executeToolBatch(params) {
-      return executeToolBatchImpl(params, tools, abortController, allowAllCanUseTool)
+      return executeToolBatchImpl(params, tools, abortController, canUseTool)
     },
     uuid: () => crypto.randomUUID(),
   }

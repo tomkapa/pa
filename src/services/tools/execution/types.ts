@@ -1,4 +1,5 @@
-import type { Tool, ToolUseContext, PermissionResult } from '../types.js'
+import type { Tool, ToolUseContext } from '../types.js'
+import type { PermissionDecision } from '../../permissions/types.js'
 import type { UserMessage, AssistantMessage, Message } from '../../../types/message.js'
 
 // ---------------------------------------------------------------------------
@@ -14,13 +15,15 @@ export interface ToolUseBlock {
 
 // ---------------------------------------------------------------------------
 // Permission check function — caller-provided permission logic
+//
+// Returns PermissionDecision (always resolved — no passthrough).
 // ---------------------------------------------------------------------------
 
 export type CanUseToolFn = (
   tool: Tool<unknown, unknown>,
   input: unknown,
   context: ToolUseContext,
-) => Promise<PermissionResult>
+) => Promise<PermissionDecision>
 
 // ---------------------------------------------------------------------------
 // Context modifier — deferred context mutation from tool results

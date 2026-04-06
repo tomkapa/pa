@@ -1,6 +1,7 @@
 import type { ZodType } from 'zod'
 import type { ToolResultBlockParam } from '@anthropic-ai/sdk/resources/messages/messages'
 import type { Message } from '../../types/message.js'
+import type { PermissionResult } from '../permissions/types.js'
 
 export type { ToolResultBlockParam }
 
@@ -8,10 +9,7 @@ export type { ToolResultBlockParam }
 // Permission & Validation results
 // ---------------------------------------------------------------------------
 
-export type PermissionResult =
-  | { behavior: 'allow'; updatedInput: unknown }
-  | { behavior: 'deny'; message: string }
-  | { behavior: 'ask'; message: string }
+export type { PermissionResult }
 
 export type ValidationResult =
   | { result: true }

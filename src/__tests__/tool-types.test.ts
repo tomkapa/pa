@@ -90,12 +90,12 @@ describe('buildTool', () => {
     expect(tool.isEnabled()).toBe(false)
   })
 
-  test('default checkPermissions allows with identity input', async () => {
+  test('default checkPermissions returns passthrough', async () => {
     const tool = buildTool(makeEchoToolDef())
     const input = { message: 'hello' }
     const result = await tool.checkPermissions(input, {} as ToolUseContext)
 
-    expect(result).toEqual({ behavior: 'allow', updatedInput: input })
+    expect(result).toEqual({ behavior: 'passthrough' })
   })
 
   test('default userFacingName returns the tool name', () => {
@@ -208,7 +208,11 @@ describe('buildTool', () => {
     const tool = buildTool(makeEchoToolDef({
       async checkPermissions(input) {
         if (input.message.includes('dangerous')) {
-          return { behavior: 'deny' as const, message: 'Dangerous content' }
+          return {
+            behavior: 'deny' as const,
+            reason: { type: 'toolSpecific' as const, description: 'Dangerous content' },
+            message: 'Dangerous content',
+          }
         }
         return { behavior: 'allow' as const, updatedInput: input }
       },
@@ -300,18 +304,29 @@ describe('type contracts', () => {
   test('PermissionResult deny shape', () => {
     const deny: PermissionResult = {
       behavior: 'deny',
+      reason: { type: 'toolSpecific', description: 'Not allowed' },
       message: 'Not allowed',
     }
     expect(deny.behavior).toBe('deny')
-    expect(deny.message).toBe('Not allowed')
+    if (deny.behavior === 'deny') {
+      expect(deny.message).toBe('Not allowed')
+    }
   })
 
   test('PermissionResult ask shape', () => {
     const ask: PermissionResult = {
       behavior: 'ask',
+      reason: { type: 'default' },
       message: 'Should I proceed?',
     }
     expect(ask.behavior).toBe('ask')
+  })
+
+  test('PermissionResult passthrough shape', () => {
+    const passthrough: PermissionResult = {
+      behavior: 'passthrough',
+    }
+    expect(passthrough.behavior).toBe('passthrough')
   })
 
   test('ValidationResult success shape', () => {

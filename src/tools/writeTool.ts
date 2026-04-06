@@ -2,8 +2,9 @@ import { readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { z } from 'zod'
 import type { StructuredPatch } from 'diff'
-import type { ToolDef, ToolResultBlockParam } from '../services/tools/types.js'
+import type { ToolDef, ToolResultBlockParam, PermissionResult } from '../services/tools/types.js'
 import type { FileStateCache } from '../utils/fileStateCache.js'
+import { checkProtectedPath } from '../services/permissions/safety.js'
 import { expandPath, isUNCPath } from '../utils/expandPath.js'
 import { checkStaleness, throwIfModifiedSinceRead, FILE_NOT_READ_ERROR } from '../utils/staleness.js'
 import { generatePatch } from '../utils/diffPatch.js'
@@ -45,6 +46,10 @@ export function writeToolDef(
 
     isReadOnly: () => false,
     isConcurrencySafe: () => false,
+
+    async checkPermissions(input): Promise<PermissionResult> {
+      return checkProtectedPath(input.file_path, 'Write')
+    },
 
     async prompt() {
       return (

@@ -18,6 +18,7 @@ import { bashToolDef } from './tools/bashTool.js'
 import { FileStateCache } from './utils/fileStateCache.js'
 import type { Tool } from './services/tools/types.js'
 import { getErrorMessage } from './utils/error.js'
+import { initializeToolPermissionContext } from './services/permissions/initialize.js'
 
 const MODEL = 'claude-sonnet-4-20250514'
 const MAX_TOKENS = 8096
@@ -99,6 +100,8 @@ function createDefaultREPLDeps(): REPLDeps {
   const bashTool = buildTool(bashToolDef())
   const tools: Tool<unknown, unknown>[] = [readTool, writeTool, editTool, globTool, grepTool, bashTool]
 
+  const permissionContext = initializeToolPermissionContext()
+
   return {
     tools,
     createQueryDeps: (abortController: AbortController) =>
@@ -108,6 +111,7 @@ function createDefaultREPLDeps(): REPLDeps {
         maxTokens: MAX_TOKENS,
         tools,
         abortController,
+        permissionContext,
       }),
   }
 }
