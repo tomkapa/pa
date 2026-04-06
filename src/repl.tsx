@@ -10,6 +10,8 @@ import { createQueryDeps } from './services/agent/deps.js'
 import { createAnthropicClient } from './services/api/client.js'
 import { buildTool } from './services/tools/build-tool.js'
 import { readToolDef } from './tools/readTool.js'
+import { writeToolDef } from './tools/writeTool.js'
+import { editToolDef } from './tools/editTool.js'
 import { FileStateCache } from './utils/fileStateCache.js'
 import type { Tool } from './services/tools/types.js'
 import { getErrorMessage } from './utils/error.js'
@@ -87,7 +89,9 @@ function createDefaultREPLDeps(): REPLDeps {
   const client = createAnthropicClient()
   const fileStateCache = new FileStateCache()
   const readTool = buildTool(readToolDef(fileStateCache))
-  const tools: Tool<unknown, unknown>[] = [readTool]
+  const writeTool = buildTool(writeToolDef(fileStateCache))
+  const editTool = buildTool(editToolDef(fileStateCache))
+  const tools: Tool<unknown, unknown>[] = [readTool, writeTool, editTool]
 
   return {
     tools,

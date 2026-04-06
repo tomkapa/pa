@@ -3,8 +3,8 @@ import { normalize } from 'node:path'
 export interface FileState {
   content: string
   timestamp: number
-  offset: number | undefined
-  limit: number | undefined
+  offset?: number
+  limit?: number
   isPartialView?: boolean
 }
 

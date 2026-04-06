@@ -1,11 +1,11 @@
 import { readFile as fsReadFile, stat } from 'node:fs/promises'
-import { homedir } from 'node:os'
-import { extname, resolve, isAbsolute } from 'node:path'
+import { extname } from 'node:path'
 import { z } from 'zod'
 import type { ToolDef, ToolResultBlockParam } from '../services/tools/types.js'
 import { FileStateCache } from '../utils/fileStateCache.js'
 import { formatFileContentWithLineNumbers } from '../utils/file.js'
 import { isBinaryExtension, isBinaryContent, isDeviceFile } from '../utils/binaryDetection.js'
+import { expandPath } from '../utils/expandPath.js'
 
 export interface ReadToolInput {
   file_path: string
@@ -71,7 +71,7 @@ export function readToolDef(
     },
 
     async call(input, _context) {
-      const filePath = resolveFilePath(input.file_path)
+      const filePath = expandPath(input.file_path)
 
       if (isDeviceFile(filePath)) {
         throw new ReadToolError(`Cannot read device file: ${filePath}`, ReadErrorCode.DEVICE_FILE)
@@ -162,14 +162,4 @@ export function readToolDef(
       }
     },
   }
-}
-
-function resolveFilePath(filePath: string): string {
-  if (filePath === '~' || filePath.startsWith('~/')) {
-    return resolve(homedir(), filePath.slice(2))
-  }
-  if (!isAbsolute(filePath)) {
-    return resolve(process.cwd(), filePath)
-  }
-  return resolve(filePath)
 }

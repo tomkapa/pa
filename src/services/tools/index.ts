@@ -1,5 +1,6 @@
 export { buildTool } from './build-tool.js'
 export { getTools, findToolByName } from './registry.js'
+export { toApiTools } from './to-api-tools.js'
 export type {
   Tool,
   ToolDef,

@@ -1,4 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk'
+import type { Tool as AnthropicTool } from '@anthropic-ai/sdk/resources/messages/messages'
 import type { AssistantMessage } from '../../types/message.js'
 import type { QueryDeps, CallModelParams, ToolUseInfo } from './types.js'
 import type { ToolBatchEvent, CanUseToolFn } from '../tools/execution/types.js'
@@ -6,6 +7,7 @@ import type { Tool, ToolUseContext } from '../tools/types.js'
 import type { QueryEvent } from '../../types/streamEvents.js'
 import { queryWithStreaming } from '../api/query.js'
 import { runTools } from '../tools/execution/run-tools.js'
+import { toApiTools } from '../tools/to-api-tools.js'
 
 export interface CreateQueryDepsOptions {
   client: Anthropic
@@ -24,9 +26,13 @@ const allowAllCanUseTool: CanUseToolFn = async (_tool, input) => ({
 export function createQueryDeps(options: CreateQueryDepsOptions): QueryDeps {
   const { client, model, maxTokens, tools, abortController } = options
 
+  // Convert tool definitions once — reused across all turns in this query
+  let apiToolsPromise: Promise<AnthropicTool[]> | undefined
+
   return {
     callModel(params: CallModelParams): AsyncGenerator<QueryEvent> {
-      return callModelImpl(client, model, maxTokens, params)
+      apiToolsPromise ??= toApiTools(tools)
+      return callModelImpl(client, model, maxTokens, params, apiToolsPromise)
     },
     executeToolBatch(params) {
       return executeToolBatchImpl(params, tools, abortController, allowAllCanUseTool)
@@ -40,13 +46,17 @@ async function* callModelImpl(
   model: string,
   maxTokens: number,
   params: CallModelParams,
+  apiToolsPromise: Promise<AnthropicTool[]>,
 ): AsyncGenerator<QueryEvent> {
+  const apiTools = await apiToolsPromise
+
   yield* queryWithStreaming(client, {
     model,
     max_tokens: maxTokens,
     messages: params.messages,
     system: params.systemPrompt,
     abortSignal: params.abortSignal,
+    ...(apiTools.length > 0 ? { tools: apiTools } : {}),
   })
 }
 
