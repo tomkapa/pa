@@ -5,6 +5,8 @@ import type {
   PermissionRuleSource,
 } from './types.js'
 import { permissionRuleValueFromString } from './rule-parser.js'
+import { matchFilePattern } from './file-pattern-matching.js'
+import { FILE_PATTERN_TOOLS } from './tool-classification.js'
 
 // ---------------------------------------------------------------------------
 // Factory
@@ -96,11 +98,16 @@ export function applyPermissionUpdates(
  * - Tool-level rule `Read` matches any use of `Read`
  * - Content-specific rule `Bash(git status)` matches only that exact command
  * - MCP server-level rule `mcp__server1` matches any tool from that server
+ * - File tools use gitignore-style pattern matching (via `ignore` package)
+ *
+ * @param cwd - Current working directory (root for file pattern matching).
+ *              Required for file tool rules with patterns.
  */
 export function matchesRule(
   ruleString: string,
   toolName: string,
   toolContent: string | undefined,
+  cwd?: string,
 ): boolean {
   const parsed = permissionRuleValueFromString(ruleString)
 
@@ -122,7 +129,17 @@ export function matchesRule(
     return true
   }
 
-  // Content-specific rule: exact match required
+  // No content to compare against
+  if (toolContent === undefined) {
+    return false
+  }
+
+  // File tools: use gitignore-style pattern matching
+  if (FILE_PATTERN_TOOLS.has(toolName) && cwd) {
+    return matchFilePattern(toolContent, parsed.ruleContent, cwd)
+  }
+
+  // Default: exact match
   return parsed.ruleContent === toolContent
 }
 
@@ -134,11 +151,12 @@ export function findFirstMatchingRule(
   rulesBySource: RulesBySource,
   toolName: string,
   toolContent: string | undefined,
+  cwd?: string,
 ): { source: PermissionRuleSource; ruleString: string } | undefined {
   for (const [source, rules] of Object.entries(rulesBySource)) {
     if (!rules) continue
     for (const ruleString of rules) {
-      if (matchesRule(ruleString, toolName, toolContent)) {
+      if (matchesRule(ruleString, toolName, toolContent, cwd)) {
         return { source: source as PermissionRuleSource, ruleString }
       }
     }

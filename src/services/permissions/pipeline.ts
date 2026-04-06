@@ -29,6 +29,7 @@ export async function hasPermissionsToUseTool(
 ): Promise<PermissionDecision> {
   const toolName = tool.name
   const toolContent = extractToolContent(tool, input)
+  const cwd = process.cwd()
 
   const isBashTool = toolName === 'Bash'
 
@@ -63,7 +64,7 @@ export async function hasPermissionsToUseTool(
       }
     }
   } else {
-    const denyMatch = findFirstMatchingRule(permissionCtx.alwaysDenyRules, toolName, toolContent)
+    const denyMatch = findFirstMatchingRule(permissionCtx.alwaysDenyRules, toolName, toolContent, cwd)
     if (denyMatch) {
       return {
         behavior: 'deny',
@@ -81,7 +82,7 @@ export async function hasPermissionsToUseTool(
   }
 
   // 2. Ask rules (bypass-immune — force prompt even in bypassPermissions)
-  const askMatch = findFirstMatchingRule(permissionCtx.alwaysAskRules, toolName, toolContent)
+  const askMatch = findFirstMatchingRule(permissionCtx.alwaysAskRules, toolName, toolContent, cwd)
   if (askMatch) {
     return {
       behavior: 'ask',
@@ -176,7 +177,7 @@ export async function hasPermissionsToUseTool(
       }
     }
   } else {
-    const allowMatch = findFirstMatchingRule(permissionCtx.alwaysAllowRules, toolName, toolContent)
+    const allowMatch = findFirstMatchingRule(permissionCtx.alwaysAllowRules, toolName, toolContent, cwd)
     if (allowMatch) {
       return {
         behavior: 'allow',

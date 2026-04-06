@@ -28,6 +28,7 @@ export { referencesProtectedPath, isFilesystemCommand, checkProtectedPath } from
 export {
   checkBashCommandSecurity,
   matchBashAllowRules,
+  matchesRuleContent,
   // Low-level utilities — exported for unit testing
   splitCompoundCommand,
   stripLeadingEnvVars,
@@ -40,8 +41,23 @@ export {
   joinLineContinuations,
 } from './command-security.js'
 export type { BashSecurityResult, BashAllowResult } from './command-security.js'
+export { matchWildcardPattern, matchLegacyPrefix, hasWildcard } from './wildcard-matching.js'
+export { matchFilePattern, matchFilePatterns } from './file-pattern-matching.js'
 export { initializeToolPermissionContext } from './initialize.js'
-export type { InitializePermissionOptions } from './initialize.js'
+export type {
+  InitializePermissionOptions,
+  InitializePermissionResult,
+  RuleValidationWarning,
+} from './initialize.js'
+export {
+  loadManagedSettings,
+  extractPermissionRules,
+  getManagedSettingsPath,
+  SettingsJsonSchema,
+} from './managed-settings.js'
+export type { SettingsJson, ManagedSettingsResult } from './managed-settings.js'
+export { validatePermissionRule } from './rule-validation.js'
+export type { RuleValidationResult } from './rule-validation.js'
 export {
   getNextPermissionMode,
   cyclePermissionMode,

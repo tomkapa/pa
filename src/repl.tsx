@@ -110,7 +110,7 @@ function createDefaultREPLDeps(): REPLDeps {
   const bashTool = buildTool(bashToolDef())
   const tools: Tool<unknown, unknown>[] = [readTool, writeTool, editTool, globTool, grepTool, bashTool]
 
-  const initialPermissionContext = initializeToolPermissionContext()
+  const { context: initialPermissionContext } = initializeToolPermissionContext()
 
   return {
     tools,

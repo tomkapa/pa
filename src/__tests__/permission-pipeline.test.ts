@@ -335,6 +335,108 @@ describe('hasPermissionsToUseTool', () => {
     })
   })
 
+  describe('file pattern matching', () => {
+    test('Read(src/**/*.ts) allow rule matches TypeScript files under src/', async () => {
+      const tool = buildTool(makeToolDef({ name: 'Read' }))
+      const ctx = createPermissionContext({
+        alwaysAllowRules: { session: ['Read(src/**/*.ts)'] },
+      })
+      const result = await hasPermissionsToUseTool(
+        tool,
+        { file_path: `${process.cwd()}/src/foo.ts` },
+        ctx,
+        makeContext(),
+      )
+      expect(result.behavior).toBe('allow')
+    })
+
+    test('Edit(src/**/*.ts) deny rule blocks matching files', async () => {
+      const tool = buildTool(makeToolDef({ name: 'Edit' }))
+      const ctx = createPermissionContext({
+        alwaysDenyRules: { userSettings: ['Edit(*.secret)'] },
+      })
+      const result = await hasPermissionsToUseTool(
+        tool,
+        { file_path: `${process.cwd()}/config.secret` },
+        ctx,
+        makeContext(),
+      )
+      expect(result.behavior).toBe('deny')
+    })
+  })
+
+  describe('wildcard pattern matching', () => {
+    test('Bash(npm *) allow rule matches npm install', async () => {
+      const tool = buildTool(makeBashToolDef())
+      const ctx = createPermissionContext({
+        alwaysAllowRules: { session: ['Bash(npm *)'] },
+      })
+      const result = await hasPermissionsToUseTool(
+        tool,
+        { command: 'npm install' },
+        ctx,
+        makeContext(),
+      )
+      expect(result.behavior).toBe('allow')
+    })
+
+    test('Bash(npm *) allow rule matches npm alone', async () => {
+      const tool = buildTool(makeBashToolDef())
+      const ctx = createPermissionContext({
+        alwaysAllowRules: { session: ['Bash(npm *)'] },
+      })
+      const result = await hasPermissionsToUseTool(
+        tool,
+        { command: 'npm' },
+        ctx,
+        makeContext(),
+      )
+      expect(result.behavior).toBe('allow')
+    })
+
+    test('Bash(npm *) allow rule does not match npx', async () => {
+      const tool = buildTool(makeBashToolDef())
+      const ctx = createPermissionContext({
+        alwaysAllowRules: { session: ['Bash(npm *)'] },
+      })
+      const result = await hasPermissionsToUseTool(
+        tool,
+        { command: 'npx create-react-app' },
+        ctx,
+        makeContext(),
+      )
+      expect(result.behavior).toBe('ask')
+    })
+
+    test('Bash(git * main) deny rule blocks git push origin main', async () => {
+      const tool = buildTool(makeBashToolDef())
+      const ctx = createPermissionContext({
+        alwaysDenyRules: { userSettings: ['Bash(git * main)'] },
+      })
+      const result = await hasPermissionsToUseTool(
+        tool,
+        { command: 'git push origin main' },
+        ctx,
+        makeContext(),
+      )
+      expect(result.behavior).toBe('deny')
+    })
+
+    test('legacy prefix Bash(npm:*) matches npm run test', async () => {
+      const tool = buildTool(makeBashToolDef())
+      const ctx = createPermissionContext({
+        alwaysAllowRules: { session: ['Bash(npm:*)'] },
+      })
+      const result = await hasPermissionsToUseTool(
+        tool,
+        { command: 'npm run test' },
+        ctx,
+        makeContext(),
+      )
+      expect(result.behavior).toBe('allow')
+    })
+  })
+
   describe('MCP tool matching', () => {
     test('server-level deny blocks all tools from that server', async () => {
       const tool = buildTool(makeToolDef({ name: 'mcp__server1__tool1' }))

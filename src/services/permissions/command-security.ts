@@ -13,6 +13,7 @@
 
 import type { PermissionRuleSource, RulesBySource } from './types.js'
 import { permissionRuleValueFromString } from './rule-parser.js'
+import { matchWildcardPattern, matchLegacyPrefix, hasWildcard } from './wildcard-matching.js'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -160,7 +161,7 @@ export function stripLeadingEnvVars(
   for (;;) {
     const match = stripped.match(ENV_VAR_PATTERN)
     if (!match) break
-    if (mode === 'safe-only' && !SAFE_ENV_VARS.has(match[1])) break
+    if (mode === 'safe-only' && !SAFE_ENV_VARS.has(match[1]!)) break
     stripped = stripped.slice(match[0].length)
   }
   return stripped
@@ -170,7 +171,7 @@ export function stripLeadingEnvVars(
 // Layer 2b: Safe Wrapper Stripping
 // ---------------------------------------------------------------------------
 
-const SAFE_WRAPPERS: ReadonlyMap<string, 'skipFlags' | number> = new Map([
+const SAFE_WRAPPERS: ReadonlyMap<string, 'skipFlags' | number> = new Map<string, 'skipFlags' | number>([
   ['timeout', 1],
   ['time', 0],
   ['nice', 'skipFlags'],
@@ -253,6 +254,46 @@ export function matchesCommandPrefix(command: string, prefix: string): boolean {
   if (command === prefix) return true
   if (command.startsWith(prefix + ' ')) return true
   return false
+}
+
+// ---------------------------------------------------------------------------
+// Layer 3b: Content-Aware Rule Matching (3-strategy: exact → legacy → wildcard)
+// ---------------------------------------------------------------------------
+
+/**
+ * Match a command against a rule's content using three strategies in order:
+ *   1. Exact match — `npm install` matches only `npm install`
+ *   2. Legacy prefix — `npm:*` matches `npm` or `npm <anything>`
+ *   3. Wildcard — `npm *` uses custom regex matching
+ *
+ * @param command - The normalized command to check
+ * @param ruleContent - The rule content (from PermissionRuleValue)
+ * @param caseInsensitive - For PowerShell rules
+ */
+export function matchesRuleContent(
+  command: string,
+  ruleContent: string,
+  caseInsensitive = false,
+): boolean {
+  // Strategy 1: Exact match
+  if (caseInsensitive
+    ? command.toLowerCase() === ruleContent.toLowerCase()
+    : command === ruleContent) {
+    return true
+  }
+
+  // Strategy 2: Legacy prefix match (colon-star at end)
+  if (matchLegacyPrefix(command, ruleContent)) {
+    return true
+  }
+
+  // Strategy 3: Wildcard match (only if pattern contains unescaped wildcards)
+  if (hasWildcard(ruleContent)) {
+    return matchWildcardPattern(command, ruleContent, caseInsensitive)
+  }
+
+  // Also check word-boundary prefix (existing behavior: Bash(git) matches "git status")
+  return matchesCommandPrefix(command, ruleContent)
 }
 
 // ---------------------------------------------------------------------------
@@ -371,8 +412,8 @@ export function checkBashCommandSecurity(
       }
     }
 
-    // Check the full command
-    if (matchesCommandPrefix(fullNormalized, rule.ruleContent)) {
+    // Check the full command (3-strategy: exact → legacy prefix → wildcard)
+    if (matchesRuleContent(fullNormalized, rule.ruleContent)) {
       return {
         behavior: 'deny',
         reason: `Denied by ${rule.source} rule: ${rule.ruleString}`,
@@ -383,7 +424,7 @@ export function checkBashCommandSecurity(
 
     // Check each subcommand (deny on ANY match)
     for (const normalized of normalizedSubs) {
-      if (matchesCommandPrefix(normalized, rule.ruleContent)) {
+      if (matchesRuleContent(normalized, rule.ruleContent)) {
         return {
           behavior: 'deny',
           reason: `Subcommand denied by ${rule.source} rule: ${rule.ruleString}`,
@@ -418,12 +459,12 @@ export function matchBashAllowRules(
   }
 
   // All subcommands matched — find the reporting rule for the first subcommand
-  const normalized = normalizeCommand(subcommands[0], 'safe-only')
+  const normalized = normalizeCommand(subcommands[0]!, 'safe-only')
   for (const rule of iterBashRules(allowRulesBySource, toolName)) {
     if (rule.ruleContent === undefined) {
       return { matched: true, source: rule.source, ruleString: rule.ruleString }
     }
-    if (matchesCommandPrefix(normalized, rule.ruleContent)) {
+    if (matchesRuleContent(normalized, rule.ruleContent)) {
       return { matched: true, source: rule.source, ruleString: rule.ruleString }
     }
   }
@@ -438,7 +479,7 @@ function matchNormalized(
 ): boolean {
   for (const rule of iterBashRules(allowRulesBySource, toolName)) {
     if (rule.ruleContent === undefined) return true
-    if (matchesCommandPrefix(normalizedSub, rule.ruleContent)) return true
+    if (matchesRuleContent(normalizedSub, rule.ruleContent)) return true
   }
   return false
 }

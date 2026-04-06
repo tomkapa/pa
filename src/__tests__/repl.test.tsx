@@ -17,7 +17,7 @@ function createFakeDeps(responses: string[]): REPLDeps {
 
   return {
     tools,
-    initialPermissionContext: initializeToolPermissionContext(),
+    initialPermissionContext: initializeToolPermissionContext().context,
     createQueryDeps: (): QueryDeps => ({
       async *callModel(_params: CallModelParams): AsyncGenerator<QueryEvent> {
         const text = responses[callIndex++] ?? 'No more responses'
@@ -34,7 +34,7 @@ function createFakeDeps(responses: string[]): REPLDeps {
 function createErrorDeps(errorMessage: string): REPLDeps {
   return {
     tools: [],
-    initialPermissionContext: initializeToolPermissionContext(),
+    initialPermissionContext: initializeToolPermissionContext().context,
     createQueryDeps: (): QueryDeps => ({
       async *callModel(): AsyncGenerator<QueryEvent> {
         throw new Error(errorMessage)
@@ -74,7 +74,7 @@ describe('REPL', () => {
     let resolveResponse: (() => void) | undefined
     const deps: REPLDeps = {
       tools: [],
-      initialPermissionContext: initializeToolPermissionContext(),
+      initialPermissionContext: initializeToolPermissionContext().context,
       createQueryDeps: (): QueryDeps => ({
         async *callModel(): AsyncGenerator<QueryEvent> {
           await new Promise<void>(r => { resolveResponse = r })
