@@ -4,7 +4,8 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { readToolDef, type ReadToolInput, type ReadToolOutput } from '../tools/readTool.js'
 import { FileStateCache } from '../utils/fileStateCache.js'
-import { buildTool, type ToolUseContext } from '../services/tools/index.js'
+import { buildTool } from '../services/tools/index.js'
+import { makeContext } from '../testing/make-context.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -12,14 +13,6 @@ import { buildTool, type ToolUseContext } from '../services/tools/index.js'
 
 let tempDir: string
 let fileStateCache: FileStateCache
-
-function makeContext(): ToolUseContext {
-  return {
-    abortController: new AbortController(),
-    messages: [],
-    options: { tools: [], debug: false, verbose: false },
-  }
-}
 
 beforeEach(async () => {
   tempDir = await mkdtemp(join(tmpdir(), 'pa-read-test-'))

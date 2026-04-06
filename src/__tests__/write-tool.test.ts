@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os'
 import { writeToolDef, type WriteToolInput } from '../tools/writeTool.js'
 import { readToolDef } from '../tools/readTool.js'
 import { FileStateCache } from '../utils/fileStateCache.js'
-import { buildTool, type ToolUseContext } from '../services/tools/index.js'
+import { buildTool } from '../services/tools/index.js'
+import { makeContext } from '../testing/make-context.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -13,14 +14,6 @@ import { buildTool, type ToolUseContext } from '../services/tools/index.js'
 
 let tempDir: string
 let fileStateCache: FileStateCache
-
-function makeContext(): ToolUseContext {
-  return {
-    abortController: new AbortController(),
-    messages: [],
-    options: { tools: [], debug: false, verbose: false },
-  }
-}
 
 /** Read a file via the Read tool so it enters the cache */
 async function readViaReadTool(filePath: string): Promise<void> {

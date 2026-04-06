@@ -23,6 +23,7 @@ import type {
   RunToolsEvent,
 } from '../services/tools/execution/types.js'
 import type { AssistantMessage } from '../types/message.js'
+import { makeContext as makeBaseContext } from '../testing/make-context.js'
 
 // ─── Test Helpers ──────────────────────────────────────────────────────
 
@@ -55,18 +56,12 @@ function makeToolDef(
 
 function makeContext(
   tools: Tool<unknown, unknown>[],
-  overrides?: Partial<ToolUseContext>,
-): ToolUseContext {
-  return {
-    abortController: new AbortController(),
-    messages: [],
-    options: {
-      tools,
-      debug: false,
-      verbose: false,
-    },
+  overrides?: { abortController?: AbortController },
+) {
+  return makeBaseContext({
     ...overrides,
-  }
+    options: { tools, debug: false, verbose: false },
+  })
 }
 
 function makeToolUseBlock(

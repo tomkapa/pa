@@ -14,6 +14,7 @@ import { writeToolDef } from './tools/writeTool.js'
 import { editToolDef } from './tools/editTool.js'
 import { globToolDef } from './tools/globTool.js'
 import { grepToolDef } from './tools/grepTool.js'
+import { bashToolDef } from './tools/bashTool.js'
 import { FileStateCache } from './utils/fileStateCache.js'
 import type { Tool } from './services/tools/types.js'
 import { getErrorMessage } from './utils/error.js'
@@ -95,7 +96,8 @@ function createDefaultREPLDeps(): REPLDeps {
   const editTool = buildTool(editToolDef(fileStateCache))
   const globTool = buildTool(globToolDef())
   const grepTool = buildTool(grepToolDef())
-  const tools: Tool<unknown, unknown>[] = [readTool, writeTool, editTool, globTool, grepTool]
+  const bashTool = buildTool(bashToolDef())
+  const tools: Tool<unknown, unknown>[] = [readTool, writeTool, editTool, globTool, grepTool, bashTool]
 
   return {
     tools,

@@ -3,21 +3,14 @@ import { mkdtemp, writeFile, rm, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { globToolDef, type GlobToolInput, type GlobToolOutput } from '../tools/globTool.js'
-import { buildTool, type ToolUseContext } from '../services/tools/index.js'
+import { buildTool } from '../services/tools/index.js'
+import { makeContext } from '../testing/make-context.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 let tempDir: string
-
-function makeContext(): ToolUseContext {
-  return {
-    abortController: new AbortController(),
-    messages: [],
-    options: { tools: [], debug: false, verbose: false },
-  }
-}
 
 beforeEach(async () => {
   tempDir = await mkdtemp(join(tmpdir(), 'pa-glob-test-'))
