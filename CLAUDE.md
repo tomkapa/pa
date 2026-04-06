@@ -6,3 +6,6 @@
 - don't swallow errors, handle them properly
 - use strict typing with TypeScript
 - enrich logging with contextual information
+- wrap numeric/boolean fields in Tool inputSchemas with `semanticNumber()`/`semanticBoolean()` from `src/utils/schema.ts` — LLMs may send `"30"` instead of `30`
+- when creating or updating a Tool, review existing tools (src/tools/) to ensure consistency: same `buildTool` pattern, same schema conventions (`z.strictObject`, semantic coercion), same safety flags, same error handling, same result formatting via `mapToolResultToToolResultBlockParam`
+- when introducing a new convention, pattern, or hardening (e.g. error handling, input coercion, validation), audit existing code for the same gap — apply it retroactively across the codebase, not just to the new code

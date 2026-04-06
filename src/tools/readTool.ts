@@ -1,7 +1,8 @@
 import { readFile as fsReadFile, stat } from 'node:fs/promises'
 import { extname } from 'node:path'
-import { z } from 'zod'
+import { z, type ZodType } from 'zod'
 import type { ToolDef, ToolResultBlockParam } from '../services/tools/types.js'
+import { semanticNumber } from '../utils/schema.js'
 import { FileStateCache } from '../utils/fileStateCache.js'
 import { formatFileContentWithLineNumbers } from '../utils/file.js'
 import { isBinaryExtension, isBinaryContent, isDeviceFile } from '../utils/binaryDetection.js'
@@ -44,12 +45,12 @@ export function readToolDef(
     name: 'Read',
     maxResultSizeChars: 100_000,
 
-    get inputSchema() {
+    get inputSchema(): ZodType<ReadToolInput> {
       return z.strictObject({
         file_path: z.string(),
-        offset: z.number().int().min(0).optional(),
-        limit: z.number().int().min(1).optional(),
-      })
+        offset: semanticNumber(z.number().int().min(0).optional()),
+        limit: semanticNumber(z.number().int().min(1).optional()),
+      }) as ZodType<ReadToolInput>
     },
 
     isReadOnly: () => true,

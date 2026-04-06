@@ -1,8 +1,9 @@
 import { readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs'
 import { dirname, extname } from 'node:path'
-import { z } from 'zod'
+import { z, type ZodType } from 'zod'
 import type { StructuredPatch } from 'diff'
 import type { ToolDef, ToolResultBlockParam } from '../services/tools/types.js'
+import { semanticBoolean } from '../utils/schema.js'
 import type { FileStateCache } from '../utils/fileStateCache.js'
 import { expandPath, isUNCPath } from '../utils/expandPath.js'
 import { checkStaleness, throwIfModifiedSinceRead, FILE_NOT_READ_ERROR } from '../utils/staleness.js'
@@ -45,13 +46,13 @@ export function editToolDef(
     name: 'Edit',
     maxResultSizeChars: 10_000,
 
-    get inputSchema() {
+    get inputSchema(): ZodType<EditToolInput> {
       return z.strictObject({
         file_path: z.string(),
         old_string: z.string(),
         new_string: z.string(),
-        replace_all: z.boolean().default(false),
-      })
+        replace_all: semanticBoolean(z.boolean().default(false)),
+      }) as ZodType<EditToolInput>
     },
 
     isReadOnly: () => false,
