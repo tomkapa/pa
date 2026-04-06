@@ -4,45 +4,11 @@ import { REPL, type REPLDeps } from '../repl.js'
 import type { QueryDeps, CallModelParams } from '../services/agent/types.js'
 import type { ToolBatchEvent } from '../services/tools/execution/types.js'
 import type { Tool } from '../services/tools/types.js'
-import type { AssistantMessage } from '../types/message.js'
 import type { QueryEvent } from '../types/streamEvents.js'
-import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages/messages'
+import { initializeToolPermissionContext } from '../services/permissions/initialize.js'
+import { makeAssistantMessage } from '../testing/make-assistant-message.js'
 
 const TICK = 100
-
-// ---------------------------------------------------------------------------
-// Test helpers
-// ---------------------------------------------------------------------------
-
-function makeAssistantMessage(text: string): AssistantMessage {
-  return {
-    type: 'assistant',
-    uuid: crypto.randomUUID(),
-    timestamp: new Date().toISOString(),
-    message: {
-      id: 'msg_test',
-      type: 'message',
-      role: 'assistant',
-      model: 'claude-sonnet-4-20250514',
-      content: [{ type: 'text', text }] as ContentBlock[],
-      stop_reason: 'end_turn',
-      stop_sequence: null,
-      stop_details: null,
-      container: null,
-      usage: {
-        input_tokens: 10,
-        output_tokens: 5,
-        cache_creation_input_tokens: 0,
-        cache_read_input_tokens: 0,
-        cache_creation: null,
-        inference_geo: null,
-        server_tool_use: null,
-        service_tier: null,
-      },
-    },
-    requestId: undefined,
-  }
-}
 
 function createFakeDeps(responses: string[]): REPLDeps {
   let callIndex = 0
@@ -51,6 +17,7 @@ function createFakeDeps(responses: string[]): REPLDeps {
 
   return {
     tools,
+    initialPermissionContext: initializeToolPermissionContext(),
     createQueryDeps: (): QueryDeps => ({
       async *callModel(_params: CallModelParams): AsyncGenerator<QueryEvent> {
         const text = responses[callIndex++] ?? 'No more responses'
@@ -67,6 +34,7 @@ function createFakeDeps(responses: string[]): REPLDeps {
 function createErrorDeps(errorMessage: string): REPLDeps {
   return {
     tools: [],
+    initialPermissionContext: initializeToolPermissionContext(),
     createQueryDeps: (): QueryDeps => ({
       async *callModel(): AsyncGenerator<QueryEvent> {
         throw new Error(errorMessage)
@@ -106,6 +74,7 @@ describe('REPL', () => {
     let resolveResponse: (() => void) | undefined
     const deps: REPLDeps = {
       tools: [],
+      initialPermissionContext: initializeToolPermissionContext(),
       createQueryDeps: (): QueryDeps => ({
         async *callModel(): AsyncGenerator<QueryEvent> {
           await new Promise<void>(r => { resolveResponse = r })

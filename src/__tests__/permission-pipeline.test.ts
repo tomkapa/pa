@@ -1,53 +1,9 @@
 import { describe, test, expect } from 'bun:test'
-import { z } from 'zod'
 import { hasPermissionsToUseTool } from '../services/permissions/pipeline.js'
 import { createPermissionContext } from '../services/permissions/context.js'
 import { buildTool } from '../services/tools/build-tool.js'
-import type { ToolDef, ToolUseContext } from '../services/tools/types.js'
-import type { PermissionResult as ToolPermissionResult } from '../services/permissions/types.js'
 import { makeContext } from '../testing/make-context.js'
-
-// ---------------------------------------------------------------------------
-// Test helpers
-// ---------------------------------------------------------------------------
-
-function makeToolDef(
-  overrides?: Partial<ToolDef<{ value: string }, string>> & {
-    checkPermissions?: (
-      input: { value: string },
-      ctx: ToolUseContext,
-    ) => Promise<ToolPermissionResult>
-  },
-): ToolDef<{ value: string }, string> {
-  return {
-    name: 'TestTool',
-    maxResultSizeChars: 50_000,
-    inputSchema: z.strictObject({ value: z.string() }),
-    async call(input) {
-      return { data: input.value }
-    },
-    async prompt() {
-      return 'A test tool.'
-    },
-    async description(input) {
-      return `Test: ${input.value}`
-    },
-    mapToolResultToToolResultBlockParam(output, toolUseID) {
-      return { type: 'tool_result' as const, tool_use_id: toolUseID, content: output }
-    },
-    ...overrides,
-  }
-}
-
-function makeBashToolDef(
-  overrides?: Partial<ToolDef<{ value: string }, string>>,
-) {
-  return makeToolDef({
-    name: 'Bash',
-    userFacingName: (input) => input.value ? `Bash(${input.value})` : 'Bash',
-    ...overrides,
-  })
-}
+import { makeToolDef, makeBashToolDef } from '../testing/make-tool-def.js'
 
 // ---------------------------------------------------------------------------
 // Pipeline tests

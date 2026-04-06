@@ -27,3 +27,11 @@ export { hasPermissionsToUseTool } from './pipeline.js'
 export { referencesProtectedPath, isFilesystemCommand, checkProtectedPath } from './safety.js'
 export { initializeToolPermissionContext } from './initialize.js'
 export type { InitializePermissionOptions } from './initialize.js'
+export {
+  getNextPermissionMode,
+  cyclePermissionMode,
+  permissionModeConfig,
+} from './mode-cycling.js'
+export type { PermissionModeDisplayConfig } from './mode-cycling.js'
+export { createCanUseToolWithConfirm } from './confirm.js'
+export type { ToolUseConfirm } from './confirm.js'

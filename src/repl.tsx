@@ -1,6 +1,8 @@
 import { useState, useCallback, useRef, useMemo } from 'react'
 import { Box, Text, useInput, useApp } from 'ink'
 import { TextInput } from './components/text-input.js'
+import { ModeIndicator } from './components/mode-indicator.js'
+import { PermissionRequest } from './components/permission-dialog.js'
 import type { Message } from './types/message.js'
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages/messages'
 import type { AgentEvent, QueryDeps } from './services/agent/types.js'
@@ -19,6 +21,9 @@ import { FileStateCache } from './utils/fileStateCache.js'
 import type { Tool } from './services/tools/types.js'
 import { getErrorMessage } from './utils/error.js'
 import { initializeToolPermissionContext } from './services/permissions/initialize.js'
+import { cyclePermissionMode } from './services/permissions/mode-cycling.js'
+import type { ToolUseConfirm } from './services/permissions/confirm.js'
+import type { ToolPermissionContext } from './services/permissions/types.js'
 
 const MODEL = 'claude-sonnet-4-20250514'
 const MAX_TOKENS = 8096
@@ -86,7 +91,12 @@ function MessageView({ message }: { message: Message }) {
 
 export interface REPLDeps {
   tools: Tool<unknown, unknown>[]
-  createQueryDeps: (abortController: AbortController) => QueryDeps
+  initialPermissionContext: ToolPermissionContext
+  createQueryDeps: (
+    abortController: AbortController,
+    permissionContext: ToolPermissionContext,
+    pushConfirm: (confirm: ToolUseConfirm) => void,
+  ) => QueryDeps
 }
 
 function createDefaultREPLDeps(): REPLDeps {
@@ -100,11 +110,16 @@ function createDefaultREPLDeps(): REPLDeps {
   const bashTool = buildTool(bashToolDef())
   const tools: Tool<unknown, unknown>[] = [readTool, writeTool, editTool, globTool, grepTool, bashTool]
 
-  const permissionContext = initializeToolPermissionContext()
+  const initialPermissionContext = initializeToolPermissionContext()
 
   return {
     tools,
-    createQueryDeps: (abortController: AbortController) =>
+    initialPermissionContext,
+    createQueryDeps: (
+      abortController: AbortController,
+      permissionContext: ToolPermissionContext,
+      pushConfirm: (confirm: ToolUseConfirm) => void,
+    ) =>
       createQueryDeps({
         client,
         model: MODEL,
@@ -112,6 +127,7 @@ function createDefaultREPLDeps(): REPLDeps {
         tools,
         abortController,
         permissionContext,
+        pushConfirm,
       }),
   }
 }
@@ -138,6 +154,32 @@ export function REPL({ deps: injectedDeps }: REPLProps) {
     () => injectedDeps ?? createDefaultREPLDeps(),
     [injectedDeps],
   )
+
+  // ---------------------------------------------------------------------------
+  // Permission context state — mutable via mode cycling and "always allow" rules
+  // ---------------------------------------------------------------------------
+
+  const [permissionContext, setPermissionContext] = useState<ToolPermissionContext>(
+    () => replDeps.initialPermissionContext,
+  )
+  const permissionContextRef = useRef(permissionContext)
+  permissionContextRef.current = permissionContext
+
+  // ---------------------------------------------------------------------------
+  // Confirmation queue — pending permission prompts
+  // ---------------------------------------------------------------------------
+
+  const [confirmQueue, setConfirmQueue] = useState<ToolUseConfirm[]>([])
+
+  const pushConfirm = useCallback((confirm: ToolUseConfirm) => {
+    setConfirmQueue(prev => [...prev, confirm])
+  }, [])
+
+  const shiftConfirm = useCallback(() => {
+    setConfirmQueue(prev => prev.slice(1))
+  }, [])
+
+  const activeConfirm = confirmQueue[0]
 
   const systemPrompt = useMemo(
     () => buildSystemPrompt(replDeps.tools),
@@ -176,7 +218,11 @@ export function REPL({ deps: injectedDeps }: REPLProps) {
     setIsLoading(true)
 
     try {
-      const deps = replDeps.createQueryDeps(abortController)
+      const deps = replDeps.createQueryDeps(
+        abortController,
+        permissionContextRef.current,
+        pushConfirm,
+      )
 
       for await (const event of query({
         messages: updatedMessages,
@@ -200,13 +246,18 @@ export function REPL({ deps: injectedDeps }: REPLProps) {
       setIsLoading(false)
       abortControllerRef.current = null
     }
-  }, [replDeps, systemPrompt, onQueryEvent])
+  }, [replDeps, systemPrompt, onQueryEvent, pushConfirm])
 
   useInput((_ch, key) => {
     if (key.escape && abortControllerRef.current) {
       abortControllerRef.current.abort()
     }
     if (key.ctrl && _ch === 'd') exit()
+
+    // Shift+Tab: cycle permission mode
+    if (key.shift && key.tab) {
+      setPermissionContext(prev => cyclePermissionMode(prev))
+    }
   })
 
   return (
@@ -215,9 +266,21 @@ export function REPL({ deps: injectedDeps }: REPLProps) {
         <MessageView key={msg.uuid} message={msg} />
       ))}
       {isLoading && <Text color="yellow">Thinking...</Text>}
+      {activeConfirm && (
+        <PermissionRequest
+          confirm={activeConfirm}
+          onDone={shiftConfirm}
+        />
+      )}
+      <ModeIndicator mode={permissionContext.mode} />
       <Box>
         <Text color="cyan">{'❯ '}</Text>
-        <TextInput value={input} onChange={setInput} onSubmit={handleSubmit} />
+        <TextInput
+          value={input}
+          onChange={setInput}
+          onSubmit={handleSubmit}
+          isActive={!activeConfirm}
+        />
       </Box>
     </Box>
   )

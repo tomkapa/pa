@@ -10,6 +10,7 @@ import { queryWithStreaming } from '../api/query.js'
 import { runTools } from '../tools/execution/run-tools.js'
 import { toApiTools } from '../tools/to-api-tools.js'
 import { hasPermissionsToUseTool } from '../permissions/pipeline.js'
+import { createCanUseToolWithConfirm, type ToolUseConfirm } from '../permissions/confirm.js'
 
 export interface CreateQueryDepsOptions {
   client: Anthropic
@@ -18,6 +19,7 @@ export interface CreateQueryDepsOptions {
   tools: Tool<unknown, unknown>[]
   abortController: AbortController
   permissionContext: ToolPermissionContext
+  pushConfirm?: (confirm: ToolUseConfirm) => void
 }
 
 function createCanUseTool(permissionCtx: ToolPermissionContext): CanUseToolFn {
@@ -26,12 +28,14 @@ function createCanUseTool(permissionCtx: ToolPermissionContext): CanUseToolFn {
 }
 
 export function createQueryDeps(options: CreateQueryDepsOptions): QueryDeps {
-  const { client, model, maxTokens, tools, abortController, permissionContext } = options
+  const { client, model, maxTokens, tools, abortController, permissionContext, pushConfirm } = options
 
   // Convert tool definitions once — reused across all turns in this query
   let apiToolsPromise: Promise<AnthropicTool[]> | undefined
 
-  const canUseTool = createCanUseTool(permissionContext)
+  const canUseTool = pushConfirm
+    ? createCanUseToolWithConfirm(permissionContext, pushConfirm)
+    : createCanUseTool(permissionContext)
 
   return {
     callModel(params: CallModelParams): AsyncGenerator<QueryEvent> {

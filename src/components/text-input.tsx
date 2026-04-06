@@ -5,9 +5,10 @@ interface TextInputProps {
   value: string
   onChange: (value: string) => void
   onSubmit?: (value: string) => void
+  isActive?: boolean
 }
 
-export function TextInput({ value, onChange, onSubmit }: TextInputProps) {
+export function TextInput({ value, onChange, onSubmit, isActive = true }: TextInputProps) {
   const [cursor, setCursor] = useState(value.length)
 
   useEffect(() => {
@@ -48,7 +49,7 @@ export function TextInput({ value, onChange, onSubmit }: TextInputProps) {
       onChange(value.slice(0, cursor) + ch + value.slice(cursor))
       setCursor(prev => prev + ch.length)
     }
-  })
+  }, { isActive })
 
   const before = value.slice(0, cursor)
   const at = value[cursor] ?? ' '
