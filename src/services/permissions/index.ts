@@ -25,6 +25,21 @@ export {
 } from './context.js'
 export { hasPermissionsToUseTool } from './pipeline.js'
 export { referencesProtectedPath, isFilesystemCommand, checkProtectedPath } from './safety.js'
+export {
+  checkBashCommandSecurity,
+  matchBashAllowRules,
+  // Low-level utilities — exported for unit testing
+  splitCompoundCommand,
+  stripLeadingEnvVars,
+  stripSafeWrappers,
+  normalizeCommand,
+  matchesCommandPrefix,
+  detectDangerousPatterns,
+  detectHeredoc,
+  detectSuspiciousLineContinuation,
+  joinLineContinuations,
+} from './command-security.js'
+export type { BashSecurityResult, BashAllowResult } from './command-security.js'
 export { initializeToolPermissionContext } from './initialize.js'
 export type { InitializePermissionOptions } from './initialize.js'
 export {

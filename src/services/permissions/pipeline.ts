@@ -5,6 +5,7 @@ import type {
 } from './types.js'
 import { findFirstMatchingRule } from './context.js'
 import { isFilesystemCommand } from './safety.js'
+import { checkBashCommandSecurity, matchBashAllowRules } from './command-security.js'
 
 /**
  * The permission pipeline — decides whether a tool can execute.
@@ -29,20 +30,53 @@ export async function hasPermissionsToUseTool(
   const toolName = tool.name
   const toolContent = extractToolContent(tool, input)
 
+  const isBashTool = toolName === 'Bash'
+
   // 1. Deny rules (highest priority — always win)
-  const denyMatch = findFirstMatchingRule(permissionCtx.alwaysDenyRules, toolName, toolContent)
-  if (denyMatch) {
-    return {
-      behavior: 'deny',
-      reason: {
-        type: 'rule',
-        rule: {
-          source: denyMatch.source,
-          ruleBehavior: 'deny',
-          ruleValue: { toolName, ruleContent: toolContent },
+  // For Bash: compound-aware deny with env var stripping and prefix matching
+  // (subsumes the generic deny check, so we skip findFirstMatchingRule for Bash)
+  if (isBashTool && typeof toolContent === 'string') {
+    const bashResult = checkBashCommandSecurity(
+      toolContent,
+      toolName,
+      permissionCtx.alwaysDenyRules,
+    )
+    if (bashResult.behavior === 'deny') {
+      return {
+        behavior: 'deny',
+        reason: {
+          type: 'rule',
+          rule: {
+            source: bashResult.matchedSource ?? 'userSettings',
+            ruleBehavior: 'deny',
+            ruleValue: { toolName, ruleContent: toolContent },
+          },
         },
-      },
-      message: `Denied by ${denyMatch.source} rule: ${denyMatch.ruleString}`,
+        message: bashResult.reason ?? `Denied by rule: ${bashResult.matchedRule}`,
+      }
+    }
+    if (bashResult.behavior === 'ask') {
+      return {
+        behavior: 'ask',
+        reason: { type: 'safetyCheck', description: bashResult.reason ?? 'Bash security check' },
+        message: bashResult.reason ?? 'Command requires manual review',
+      }
+    }
+  } else {
+    const denyMatch = findFirstMatchingRule(permissionCtx.alwaysDenyRules, toolName, toolContent)
+    if (denyMatch) {
+      return {
+        behavior: 'deny',
+        reason: {
+          type: 'rule',
+          rule: {
+            source: denyMatch.source,
+            ruleBehavior: 'deny',
+            ruleValue: { toolName, ruleContent: toolContent },
+          },
+        },
+        message: `Denied by ${denyMatch.source} rule: ${denyMatch.ruleString}`,
+      }
     }
   }
 
@@ -120,19 +154,42 @@ export async function hasPermissionsToUseTool(
   }
 
   // 7. Allow rules
-  const allowMatch = findFirstMatchingRule(permissionCtx.alwaysAllowRules, toolName, toolContent)
-  if (allowMatch) {
-    return {
-      behavior: 'allow',
-      reason: {
-        type: 'rule',
-        rule: {
-          source: allowMatch.source,
-          ruleBehavior: 'allow',
-          ruleValue: { toolName, ruleContent: toolContent },
+  // For Bash: compound-aware matching with prefix word boundaries
+  if (isBashTool && typeof toolContent === 'string') {
+    const bashAllow = matchBashAllowRules(
+      toolContent,
+      toolName,
+      permissionCtx.alwaysAllowRules,
+    )
+    if (bashAllow.matched) {
+      return {
+        behavior: 'allow',
+        reason: {
+          type: 'rule',
+          rule: {
+            source: bashAllow.source ?? 'session',
+            ruleBehavior: 'allow',
+            ruleValue: { toolName, ruleContent: toolContent },
+          },
         },
-      },
-      updatedInput: input,
+        updatedInput: input,
+      }
+    }
+  } else {
+    const allowMatch = findFirstMatchingRule(permissionCtx.alwaysAllowRules, toolName, toolContent)
+    if (allowMatch) {
+      return {
+        behavior: 'allow',
+        reason: {
+          type: 'rule',
+          rule: {
+            source: allowMatch.source,
+            ruleBehavior: 'allow',
+            ruleValue: { toolName, ruleContent: toolContent },
+          },
+        },
+        updatedInput: input,
+      }
     }
   }
 
@@ -158,21 +215,10 @@ export async function hasPermissionsToUseTool(
 // Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Extract the "content" from a tool input for rule matching.
- *
- * For Bash: the command string. For file tools: the file_path.
- * Returns undefined for tools without content-specific matching.
- */
 function extractToolContent(_tool: Tool<unknown, unknown>, input: unknown): string | undefined {
   if (!isRecord(input)) return undefined
-
-  // Bash tool: match against command
   if (typeof input.command === 'string') return input.command
-
-  // File tools (Read, Write, Edit): match against file_path
   if (typeof input.file_path === 'string') return input.file_path
-
   return undefined
 }
 
