@@ -9,6 +9,7 @@ import { renderToBuffer } from './output.js'
 import { computeOutputHeight } from './render-node-to-output.js'
 import { diffBuffers, serializePatches, serializeFullFrame } from './log-update.js'
 import { cursorTo, cursorHide, cursorShow, resetStyle, eraseDown, bracketedPasteEnable, bracketedPasteDisable } from './termio/csi.js'
+import { decreset, disableMouseTracking } from './termio/dec.js'
 import { throttle } from './throttle.js'
 import { FRAME_INTERVAL_MS } from './constants.js'
 
@@ -41,6 +42,13 @@ export class Ink {
   private resolveExit!: () => void
 
   private readonly resizeHandler: () => void
+
+  private altScreenActive = false
+  private readonly signalHandler: () => void
+
+  setAltScreen(active: boolean): void {
+    this.altScreenActive = active
+  }
 
   constructor(options: InkOptions) {
     this.stdout = options.stdout
@@ -83,6 +91,17 @@ export class Ink {
     }
     this.stdout.on('resize', this.resizeHandler)
 
+    this.signalHandler = () => {
+      if (this.altScreenActive) {
+        // disableMouseTracking() is idempotent — safe to send even if tracking
+        // was never enabled. Combine into a single write for atomic output.
+        this.stdout.write(disableMouseTracking() + decreset(1049))
+      }
+      process.exit(0)
+    }
+    process.on('SIGTERM', this.signalHandler)
+    process.on('SIGINT', this.signalHandler)
+
     if (!this.debug) {
       this.stdout.write(bracketedPasteEnable())
     }
@@ -107,6 +126,8 @@ export class Ink {
     this.throttledRender.cancel()
     this.reconciler.updateContainer(null, this.container, null, () => {})
     this.stdout.removeListener('resize', this.resizeHandler)
+    process.removeListener('SIGTERM', this.signalHandler)
+    process.removeListener('SIGINT', this.signalHandler)
 
     if (!this.debug) {
       this.stdout.write(bracketedPasteDisable() + cursorShow() + resetStyle())
@@ -150,8 +171,13 @@ export class Ink {
 
   private performRender(): void {
     const cols = this.stdout.columns ?? 80
+    const viewportRows = this.stdout.rows ?? 24
     const outputHeight = computeOutputHeight(this.rootNode)
-    const height = Math.min(outputHeight, this.stdout.rows ?? 24)
+    // In alt-screen mode, always use the full viewport height to avoid leaving
+    // stale cells and to prevent spurious scroll when content fills the screen.
+    const height = this.altScreenActive
+      ? viewportRows
+      : Math.min(outputHeight, viewportRows)
 
     if (this.backBuffer.width !== cols || this.backBuffer.height !== height) {
       this.backBuffer = createScreenBuffer(cols, height)

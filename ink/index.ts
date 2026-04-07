@@ -65,6 +65,7 @@ export function render(tree: ReactNode, options?: RenderOptions): Instance {
 
 export { Box, type BoxProps } from './components/Box.js'
 export { Text, type TextProps } from './components/Text.js'
+export { AlternateScreen, type AlternateScreenProps } from './components/AlternateScreen.js'
 
 // ---------------------------------------------------------------------------
 // Hook re-exports
