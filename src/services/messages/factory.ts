@@ -14,6 +14,7 @@ export interface CreateUserMessageParams {
   content: string | ContentBlockParam[]
   isMeta?: true
   toolUseResult?: unknown
+  toolName?: string
   sourceToolAssistantUUID?: string
   uuid?: string
 }
@@ -33,6 +34,7 @@ export function createUserMessage(params: CreateUserMessageParams): UserMessage 
 
   if (params.isMeta) msg.isMeta = true
   if (params.toolUseResult !== undefined) msg.toolUseResult = params.toolUseResult
+  if (params.toolName !== undefined) msg.toolName = params.toolName
   if (params.sourceToolAssistantUUID !== undefined) {
     msg.sourceToolAssistantUUID = params.sourceToolAssistantUUID
   }

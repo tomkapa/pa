@@ -6,6 +6,11 @@ import { ripGrep } from '../utils/ripgrep.js'
 import { expandPath } from '../utils/expandPath.js'
 import { semanticNumber, semanticBoolean } from '../utils/schema.js'
 import { VCS_DIRS } from '../utils/vcs.js'
+import {
+  renderToolUseMessage,
+  renderToolResultMessage,
+  isResultTruncated,
+} from './grepToolUI.js'
 
 // ---------------------------------------------------------------------------
 // Input / Output types
@@ -265,6 +270,10 @@ export function grepToolDef(): ToolDef<GrepToolInput, GrepToolOutput> {
         },
       }
     },
+
+    renderToolUseMessage,
+    renderToolResultMessage,
+    isResultTruncated,
 
     mapToolResultToToolResultBlockParam(
       output: GrepToolOutput,

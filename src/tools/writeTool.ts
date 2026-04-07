@@ -8,6 +8,7 @@ import { checkProtectedPath } from '../services/permissions/safety.js'
 import { expandPath, isUNCPath } from '../utils/expandPath.js'
 import { checkStaleness, throwIfModifiedSinceRead, FILE_NOT_READ_ERROR } from '../utils/staleness.js'
 import { generatePatch } from '../utils/diffPatch.js'
+import { renderToolUseMessage, renderToolResultMessage } from './writeToolUI.js'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -66,6 +67,8 @@ export function writeToolDef(
     userFacingName(input) {
       return input.file_path ? `Write(${input.file_path})` : 'Write'
     },
+    renderToolUseMessage,
+    renderToolResultMessage,
 
     async validateInput(input, _context) {
       const filePath = expandPath(input.file_path)

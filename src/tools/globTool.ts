@@ -3,6 +3,11 @@ import { z } from 'zod'
 import type { ToolDef, ToolResultBlockParam } from '../services/tools/types.js'
 import { glob, relativizePaths } from '../utils/glob.js'
 import { expandPath } from '../utils/expandPath.js'
+import {
+  renderToolUseMessage,
+  renderToolResultMessage,
+  isResultTruncated,
+} from './globToolUI.js'
 
 // ---------------------------------------------------------------------------
 // Input / Output types
@@ -88,6 +93,10 @@ export function globToolDef(): ToolDef<GlobToolInput, GlobToolOutput> {
         },
       }
     },
+
+    renderToolUseMessage,
+    renderToolResultMessage,
+    isResultTruncated,
 
     mapToolResultToToolResultBlockParam(
       output: GlobToolOutput,

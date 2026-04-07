@@ -3,8 +3,8 @@ import { Box, Text, useInput, useApp } from './ink.js'
 import { TextInput } from './components/text-input.js'
 import { ModeIndicator } from './components/mode-indicator.js'
 import { PermissionRequest } from './components/permission-dialog.js'
+import { AssistantToolUseBlock, UserToolResultBlock } from './components/tool-messages.js'
 import type { Message } from './types/message.js'
-import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages/messages'
 import type { AgentEvent, QueryDeps } from './services/agent/types.js'
 import { createUserMessage, createSystemMessage } from './services/messages/factory.js'
 import { query } from './services/agent/query.js'
@@ -49,39 +49,88 @@ function buildSystemPrompt(tools: Tool<unknown, unknown>[]): string {
 // Message rendering helpers
 // ---------------------------------------------------------------------------
 
-function extractText(blocks: readonly { type: string; text?: string }[]): string {
-  return blocks
+function getUserInputText(msg: Message & { type: 'user' }): string {
+  const content = msg.message.content
+  if (typeof content === 'string') return content
+  return content
     .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
     .map(b => b.text)
     .join('')
 }
 
-function getTextContent(msg: Message): string {
-  if (msg.type === 'user') {
-    const content = msg.message.content
-    if (typeof content === 'string') return content
-    return extractText(content)
-  }
-  if (msg.type === 'assistant') {
-    return extractText(msg.message.content as ContentBlock[])
-  }
-  return msg.content
+interface MessageViewProps {
+  message: Message
+  tools: Tool<unknown, unknown>[]
+  verbose: boolean
 }
 
-function MessageView({ message }: { message: Message }) {
+function MessageView({ message, tools, verbose }: MessageViewProps) {
   if (message.type === 'user' && !message.isMeta) {
-    return <Text color="green">{`> ${getTextContent(message)}`}</Text>
+    return <Text color="green">{`> ${getUserInputText(message)}`}</Text>
   }
+
   if (message.type === 'assistant') {
-    return <Text>{getTextContent(message)}</Text>
+    const blocks = message.message.content
+    return (
+      <Box flexDirection="column">
+        {blocks.map((block, i) => {
+          if (block.type === 'text') {
+            return block.text ? <Text key={i}>{block.text}</Text> : null
+          }
+          if (block.type === 'tool_use') {
+            return (
+              <AssistantToolUseBlock
+                key={i}
+                toolName={block.name}
+                toolInput={block.input}
+                tools={tools}
+                verbose={verbose}
+              />
+            )
+          }
+          return null
+        })}
+      </Box>
+    )
   }
+
+  if (message.type === 'user' && message.isMeta) {
+    const content = message.message.content
+    if (!Array.isArray(content)) return null
+
+    const hasToolResult = content.some(b => b.type === 'tool_result')
+    if (!hasToolResult) return null
+
+    // Tool result blocks carry is_error at the SDK level; cast to access it
+    const toolResultBlock = content.find(b => b.type === 'tool_result') as
+      | { type: 'tool_result'; tool_use_id: string; content?: unknown; is_error?: boolean }
+      | undefined
+
+    const isError = toolResultBlock?.is_error === true
+    const rawContent = toolResultBlock?.content
+    const errorContent = isError
+      ? (typeof rawContent === 'string' ? rawContent : undefined)
+      : undefined
+
+    return (
+      <UserToolResultBlock
+        toolUseResult={message.toolUseResult}
+        toolName={message.toolName}
+        isError={isError}
+        errorContent={errorContent}
+        tools={tools}
+        verbose={verbose}
+      />
+    )
+  }
+
   if (message.type === 'system') {
     const color = message.level === 'error' ? 'red'
       : message.level === 'warning' ? 'yellow'
       : 'gray'
     return <Text color={color}>{message.content}</Text>
   }
-  // Meta user messages (tool results) — skip in display
+
   return null
 }
 
@@ -263,7 +312,7 @@ export function REPL({ deps: injectedDeps }: REPLProps) {
   return (
     <Box flexDirection="column">
       {messages.map(msg => (
-        <MessageView key={msg.uuid} message={msg} />
+        <MessageView key={msg.uuid} message={msg} tools={replDeps.tools} verbose={false} />
       ))}
       {isLoading && <Text color="yellow">Thinking...</Text>}
       {activeConfirm && (

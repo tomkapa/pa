@@ -9,6 +9,8 @@ export type {
   PermissionResult,
   ValidationResult,
   ToolResultBlockParam,
+  ToolRenderOptions,
+  ToolResultRenderOptions,
 } from './types.js'
 export {
   all,

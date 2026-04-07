@@ -7,6 +7,11 @@ import { FileStateCache } from '../utils/fileStateCache.js'
 import { formatFileContentWithLineNumbers } from '../utils/file.js'
 import { isBinaryExtension, isBinaryContent, isDeviceFile } from '../utils/binaryDetection.js'
 import { expandPath } from '../utils/expandPath.js'
+import {
+  renderToolUseMessage,
+  renderToolResultMessage,
+  isResultTruncated,
+} from './readToolUI.js'
 
 export interface ReadToolInput {
   file_path: string
@@ -151,6 +156,10 @@ export function readToolDef(
         },
       }
     },
+
+    renderToolUseMessage,
+    renderToolResultMessage,
+    isResultTruncated,
 
     mapToolResultToToolResultBlockParam(
       output: ReadToolOutput,

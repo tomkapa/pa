@@ -109,6 +109,7 @@ export async function* runToolUse(
     content: [resultBlock],
     isMeta: true,
     toolUseResult: toolResult.data,
+    toolName: tool.name,
     sourceToolAssistantUUID: assistantMessageUUID,
   })
 

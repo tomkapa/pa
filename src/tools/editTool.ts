@@ -9,6 +9,11 @@ import type { FileStateCache } from '../utils/fileStateCache.js'
 import { expandPath, isUNCPath } from '../utils/expandPath.js'
 import { checkStaleness, throwIfModifiedSinceRead, FILE_NOT_READ_ERROR } from '../utils/staleness.js'
 import { generatePatch } from '../utils/diffPatch.js'
+import {
+  userFacingName,
+  renderToolUseMessage,
+  renderToolResultMessage,
+} from './editToolUI.js'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -75,9 +80,9 @@ export function editToolDef(
       return `Edit ${input.file_path}`
     },
 
-    userFacingName(input) {
-      return input.file_path ? `Edit(${input.file_path})` : 'Edit'
-    },
+    userFacingName,
+    renderToolUseMessage,
+    renderToolResultMessage,
 
     async validateInput(input, _context) {
       const filePath = expandPath(input.file_path)

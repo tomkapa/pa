@@ -7,6 +7,12 @@ import { z, type ZodType } from 'zod'
 import type { ToolDef, ToolResultBlockParam, ToolUseContext, PermissionResult } from '../services/tools/types.js'
 import { semanticNumber } from '../utils/schema.js'
 import { checkProtectedPath } from '../services/permissions/safety.js'
+import {
+  renderToolUseMessage,
+  renderToolResultMessage,
+  isResultTruncated,
+  getActivityDescription,
+} from './bashToolUI.js'
 
 // ---------------------------------------------------------------------------
 // Input / Output types
@@ -293,6 +299,10 @@ export function bashToolDef(): ToolDef<BashToolInput, BashToolOutput> {
     userFacingName(input) {
       return input.command ? `Bash(${truncatePreview(input.command, 40)})` : 'Bash'
     },
+    renderToolUseMessage,
+    renderToolResultMessage,
+    isResultTruncated,
+    getActivityDescription,
 
     async call(input, context: ToolUseContext) {
       const timeoutMs = input.timeout ?? DEFAULT_TIMEOUT_MS

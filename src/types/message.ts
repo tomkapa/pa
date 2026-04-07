@@ -39,6 +39,8 @@ export interface UserMessage extends MessageBase {
   isMeta?: true
   /** Present when this is a tool_result message. */
   toolUseResult?: unknown
+  /** Name of the tool that produced this result. */
+  toolName?: string
   /** Links tool_result to its tool_use's assistant message UUID. */
   sourceToolAssistantUUID?: string
 }
