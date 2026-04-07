@@ -53,6 +53,7 @@ export {
   loadManagedSettings,
   extractPermissionRules,
   getManagedSettingsPath,
+  getManagedConfigRoot,
   SettingsJsonSchema,
 } from './managed-settings.js'
 export type { SettingsJson, ManagedSettingsResult } from './managed-settings.js'

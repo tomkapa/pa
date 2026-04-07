@@ -12,6 +12,7 @@
 // ---------------------------------------------------------------------------
 
 import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { z } from 'zod'
 import { isNodeError } from '../../utils/error.js'
 
@@ -39,18 +40,35 @@ export type SettingsJson = z.infer<typeof SettingsJsonSchema>
 // ---------------------------------------------------------------------------
 
 /**
+ * Get the root directory where admin-managed Claude Code config lives.
+ *
+ *   macOS:  /Library/Application Support/ClaudeCode
+ *   Linux:  /etc/claude-code
+ *   Windows: C:\ProgramData\ClaudeCode
+ *
+ * Both `managed-settings.json` and the managed CLAUDE.md / rules tree
+ * live under this root, so several modules need to agree on it.
+ */
+export function getManagedConfigRoot(platform: NodeJS.Platform = process.platform): string {
+  switch (platform) {
+    case 'darwin':
+      return '/Library/Application Support/ClaudeCode'
+    case 'win32':
+      return 'C:\\ProgramData\\ClaudeCode'
+    default:
+      // Linux and other POSIX
+      return '/etc/claude-code'
+  }
+}
+
+/**
  * Get the managed settings file path for the current platform.
  */
 export function getManagedSettingsPath(platform: NodeJS.Platform = process.platform): string {
-  switch (platform) {
-    case 'darwin':
-      return '/Library/Application Support/ClaudeCode/managed-settings.json'
-    case 'win32':
-      return 'C:\\ProgramData\\ClaudeCode\\managed-settings.json'
-    default:
-      // Linux and other POSIX
-      return '/etc/claude-code/managed-settings.json'
-  }
+  // Use the platform-specific join so Windows paths stay backslash-separated
+  // even when this code runs on POSIX (e.g., a CI matrix entry).
+  const joiner = platform === 'win32' ? path.win32.join : path.posix.join
+  return joiner(getManagedConfigRoot(platform), 'managed-settings.json')
 }
 
 // ---------------------------------------------------------------------------
