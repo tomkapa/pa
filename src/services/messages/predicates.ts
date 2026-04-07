@@ -1,3 +1,4 @@
+import type { ToolResultBlockParam } from '@anthropic-ai/sdk/resources/messages/messages'
 import type { Message, UserMessage } from '../../types/message.js'
 
 /**
@@ -22,4 +23,14 @@ export function isApiMessage(m: Message): boolean {
   if (m.type === 'user' || m.type === 'assistant') return true
   if (m.type === 'system' && m.subtype === 'local_command') return true
   return false
+}
+
+/** Type guard for `tool_result` content blocks inside a user message. */
+export function isToolResultBlock(block: unknown): block is ToolResultBlockParam {
+  return (
+    typeof block === 'object' &&
+    block !== null &&
+    'type' in block &&
+    (block as { type: unknown }).type === 'tool_result'
+  )
 }

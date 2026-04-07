@@ -1,4 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
+import type { ClientOptions as AnthropicClientOptions } from '@anthropic-ai/sdk'
+import { createDumpPromptsFetch } from '../observability/dumpPrompts.js'
 
 export interface ClientOptions {
   apiKey?: string
@@ -19,5 +21,6 @@ export function createAnthropicClient(options: ClientOptions = {}): Anthropic {
     baseURL: options.baseURL ?? process.env['ANTHROPIC_BASE_URL'],
     maxRetries: options.maxRetries ?? DEFAULT_MAX_RETRIES,
     timeout: timeoutMs,
+    fetch: createDumpPromptsFetch() as AnthropicClientOptions['fetch'],
   })
 }
