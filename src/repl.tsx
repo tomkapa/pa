@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useMemo } from 'react'
-import { Box, Text, useInput, useApp } from 'ink'
+import { Box, Text, useInput, useApp } from './ink.js'
 import { TextInput } from './components/text-input.js'
 import { ModeIndicator } from './components/mode-indicator.js'
 import { PermissionRequest } from './components/permission-dialog.js'

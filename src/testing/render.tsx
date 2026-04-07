@@ -1,9 +1,10 @@
 import { EventEmitter } from 'node:events'
-import { render as inkRender } from 'ink'
+import { render as inkRender } from '../../ink/index.js'
 import type { ReactNode } from 'react'
 
 class FakeStdout extends EventEmitter {
   get columns() { return 100 }
+  get rows() { return 24 }
   _lastFrame: string | undefined
   write = (frame: string) => { this._lastFrame = frame }
   lastFrame = () => this._lastFrame

@@ -1,4 +1,4 @@
-import { Text } from 'ink'
+import { Text } from '../ink.js'
 import type { PermissionMode } from '../services/permissions/types.js'
 import { permissionModeConfig } from '../services/permissions/mode-cycling.js'
 

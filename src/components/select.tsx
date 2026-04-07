@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Box, Text, useInput } from 'ink'
+import { Box, Text, useInput } from '../ink.js'
 
 // ---------------------------------------------------------------------------
 // SelectOption — a single option in the selector

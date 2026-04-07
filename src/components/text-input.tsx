@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Text, useInput } from 'ink'
+import { Text, useInput } from '../ink.js'
 
 interface TextInputProps {
   value: string

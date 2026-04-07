@@ -1,4 +1,4 @@
-import { Box, Text } from 'ink'
+import { Box, Text } from '../ink.js'
 import { Select, type SelectOption } from './select.js'
 import type { ToolUseConfirm } from '../services/permissions/confirm.js'
 import type { PermissionUpdate } from '../services/permissions/types.js'

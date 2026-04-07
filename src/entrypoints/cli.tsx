@@ -11,6 +11,8 @@ const program = new Command()
   .version('0.1.0')
   .description('An AI coding agent')
   .action(async () => {
+    // Clear screen and move cursor to top before rendering TUI
+    process.stdout.write('\x1b[2J\x1b[H')
     const instance = createRoot(<App />)
     await instance.waitUntilExit()
   })
