@@ -153,7 +153,7 @@ async function collectAll(
 function baseParams(overrides: Partial<AgentQueryParams> = {}): AgentQueryParams {
   return {
     messages: [],
-    systemPrompt: 'You are a test assistant.',
+    systemPrompt: ['You are a test assistant.'],
     deps: createDeps(),
     ...overrides,
   }
@@ -608,10 +608,10 @@ describe('agent loop', () => {
       }
 
       const deps = createDeps({ callModel })
-      await collectAll(query(baseParams({ systemPrompt: 'Be helpful.', deps })))
+      await collectAll(query(baseParams({ systemPrompt: ['Be helpful.'], deps })))
 
       expect(captured).toHaveLength(1)
-      expect(captured[0]!.systemPrompt).toBe('Be helpful.')
+      expect(captured[0]!.systemPrompt).toEqual(['Be helpful.'])
     })
 
     test('passes abort signal to callModel', async () => {
@@ -647,7 +647,7 @@ describe('agent loop', () => {
           timestamp: '2024-01-01T00:00:00Z',
           message: { role: 'user', content: 'Hello' },
         }],
-        systemPrompt: 'test',
+        systemPrompt: ['test'],
         deps,
       }))
 

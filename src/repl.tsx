@@ -24,25 +24,48 @@ import { initializeToolPermissionContext } from './services/permissions/initiali
 import { cyclePermissionMode } from './services/permissions/mode-cycling.js'
 import type { ToolUseConfirm } from './services/permissions/confirm.js'
 import type { ToolPermissionContext } from './services/permissions/types.js'
+import {
+  buildEffectiveSystemPrompt,
+  getSystemPrompt,
+  getSystemContext,
+  getUserContext,
+} from './services/system-prompt/index.js'
 
 const MODEL = 'claude-sonnet-4-20250514'
 const MAX_TOKENS = 8096
 
 // ---------------------------------------------------------------------------
-// System prompt (static MVP — S-015 adds the dynamic version)
+// System prompt assembly
+//
+// `getSystemPrompt` builds the static + dynamic sections; the user/system
+// context bundles (CLAUDE.md, current date, git status) are appended as
+// extra sections so the API layer can later cache them independently.
+// All loaders are memoized at the service layer, so calling this on
+// every submit is cheap after the first turn.
 // ---------------------------------------------------------------------------
 
-function buildSystemPrompt(tools: Tool<unknown, unknown>[]): string {
-  const toolDescriptions = tools
-    .map(t => `- ${t.name}`)
-    .join('\n')
+async function buildPromptForSubmit(
+  tools: Tool<unknown, unknown>[],
+): Promise<string[]> {
+  const enabledTools = new Set(tools.map(t => t.name))
+  const [defaultPrompt, userCtx, sysCtx] = await Promise.all([
+    getSystemPrompt({ enabledTools, modelId: MODEL }),
+    getUserContext(),
+    getSystemContext(),
+  ])
 
-  return [
-    'You are a coding assistant.',
-    `You have access to these tools:\n${toolDescriptions}`,
-    `Current working directory: ${process.cwd()}`,
-    `Today's date: ${new Date().toISOString().split('T')[0]}`,
-  ].join('\n\n')
+  const contextSections: string[] = []
+  if (userCtx.claudeMd) {
+    contextSections.push(`# claudeMd\n${userCtx.claudeMd}`)
+  }
+  contextSections.push(`# currentDate\nToday's date is ${userCtx.currentDate}.`)
+  if (sysCtx.gitStatus) {
+    contextSections.push(`# gitStatus\n${sysCtx.gitStatus}`)
+  }
+
+  return buildEffectiveSystemPrompt({
+    defaultSystemPrompt: [...defaultPrompt, ...contextSections],
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -230,11 +253,6 @@ export function REPL({ deps: injectedDeps }: REPLProps) {
 
   const activeConfirm = confirmQueue[0]
 
-  const systemPrompt = useMemo(
-    () => buildSystemPrompt(replDeps.tools),
-    [replDeps.tools],
-  )
-
   const onQueryEvent = useCallback((event: AgentEvent) => {
     if (event.type === 'assistant') {
       setMessages(prev => {
@@ -267,11 +285,16 @@ export function REPL({ deps: injectedDeps }: REPLProps) {
     setIsLoading(true)
 
     try {
-      const deps = replDeps.createQueryDeps(
-        abortController,
-        permissionContextRef.current,
-        pushConfirm,
-      )
+      const [deps, systemPrompt] = await Promise.all([
+        Promise.resolve(
+          replDeps.createQueryDeps(
+            abortController,
+            permissionContextRef.current,
+            pushConfirm,
+          ),
+        ),
+        buildPromptForSubmit(replDeps.tools),
+      ])
 
       for await (const event of query({
         messages: updatedMessages,
@@ -295,7 +318,7 @@ export function REPL({ deps: injectedDeps }: REPLProps) {
       setIsLoading(false)
       abortControllerRef.current = null
     }
-  }, [replDeps, systemPrompt, onQueryEvent, pushConfirm])
+  }, [replDeps, onQueryEvent, pushConfirm])
 
   useInput((_ch, key) => {
     if (key.escape && abortControllerRef.current) {

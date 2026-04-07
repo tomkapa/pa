@@ -22,7 +22,12 @@ export type ToolUseInfo = ToolUseBlock
 
 export interface CallModelParams {
   messages: Array<{ role: 'user' | 'assistant'; content: string | ContentBlockParam[] }>
-  systemPrompt: string
+  /**
+   * System prompt sections, in order. The deps layer is responsible for
+   * stripping the DYNAMIC_BOUNDARY marker and serializing to the API
+   * format. See `services/system-prompt/` for how this array is built.
+   */
+  systemPrompt: string[]
   abortSignal?: AbortSignal
 }
 
@@ -39,7 +44,8 @@ export interface QueryDeps {
 
 export interface AgentQueryParams {
   messages: Message[]
-  systemPrompt: string
+  /** System prompt sections — see `services/system-prompt/` for assembly. */
+  systemPrompt: string[]
   maxTurns?: number
   abortSignal?: AbortSignal
   deps: QueryDeps

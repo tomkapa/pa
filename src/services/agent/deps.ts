@@ -1,5 +1,8 @@
 import type Anthropic from '@anthropic-ai/sdk'
-import type { Tool as AnthropicTool } from '@anthropic-ai/sdk/resources/messages/messages'
+import type {
+  TextBlockParam,
+  Tool as AnthropicTool,
+} from '@anthropic-ai/sdk/resources/messages/messages'
 import type { AssistantMessage } from '../../types/message.js'
 import type { QueryDeps, CallModelParams, ToolUseInfo } from './types.js'
 import type { ToolBatchEvent, CanUseToolFn } from '../tools/execution/types.js'
@@ -11,6 +14,21 @@ import { runTools } from '../tools/execution/run-tools.js'
 import { toApiTools } from '../tools/to-api-tools.js'
 import { hasPermissionsToUseTool } from '../permissions/pipeline.js'
 import { createCanUseToolWithConfirm, type ToolUseConfirm } from '../permissions/confirm.js'
+import { DYNAMIC_BOUNDARY } from '../system-prompt/types.js'
+
+/**
+ * Convert the agent's system prompt array (sections + boundary marker)
+ * into the SDK's `system` field. The boundary marker is dropped here —
+ * it exists for future API-layer cache-control splitting (CODE-70 /
+ * CODE-52) and is not meaningful to the model itself. We emit one
+ * `text` block per surviving section so the API call's structure stays
+ * close to what the future caching layer will need.
+ */
+export function systemPromptToBlocks(prompt: string[]): TextBlockParam[] {
+  return prompt
+    .filter(s => s !== DYNAMIC_BOUNDARY && s.length > 0)
+    .map(text => ({ type: 'text', text }))
+}
 
 export interface CreateQueryDepsOptions {
   client: Anthropic
@@ -62,7 +80,7 @@ async function* callModelImpl(
     model,
     max_tokens: maxTokens,
     messages: params.messages,
-    system: params.systemPrompt,
+    system: systemPromptToBlocks(params.systemPrompt),
     abortSignal: params.abortSignal,
     ...(apiTools.length > 0 ? { tools: apiTools } : {}),
   })
