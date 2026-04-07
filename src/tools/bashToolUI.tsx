@@ -7,7 +7,7 @@ const MAX_COMMAND_DISPLAY_LINES = 2
 const MAX_COMMAND_DISPLAY_CHARS = 160
 const PREVIEW_OUTPUT_LINES = 10
 
-function truncateCommand(command: string): string {
+export function truncateCommand(command: string): string {
   const lines = command.split('\n')
   const truncated = lines.slice(0, MAX_COMMAND_DISPLAY_LINES)
   let result = truncated.join('\n')
