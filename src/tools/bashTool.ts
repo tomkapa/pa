@@ -10,6 +10,7 @@ import { checkProtectedPath } from '../services/permissions/safety.js'
 import {
   renderToolUseMessage,
   renderToolResultMessage,
+  renderToolUseProgressMessage,
   isResultTruncated,
   getActivityDescription,
 } from './bashToolUI.js'
@@ -31,12 +32,29 @@ export interface BashToolOutput {
   interrupted: boolean
 }
 
+/**
+ * Progress payload streamed while a Bash command runs.
+ *
+ * Carries the latest accumulated stdout/stderr buffers (not deltas) so the
+ * renderer can show the most recent output without having to stitch deltas
+ * together. `elapsedMs` lets the renderer surface a running clock when output
+ * is sparse.
+ */
+export interface BashProgress {
+  stdout: string
+  stderr: string
+  elapsedMs: number
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 const DEFAULT_TIMEOUT_MS = 120_000
 const MAX_TIMEOUT_MS = 600_000
+// Minimum gap between chunk-driven progress emits — keeps the REPL re-render
+// rate ≤ ~10 Hz on chatty commands while still feeling live.
+const PROGRESS_MIN_INTERVAL_MS = 100
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -112,6 +130,7 @@ function executeCommand(
   command: string,
   timeoutMs: number,
   abortSignal: AbortSignal,
+  onProgress?: (progress: BashProgress) => void,
 ): Promise<BashToolOutput> {
   return new Promise<BashToolOutput>((resolve) => {
     const cwdFile = makeCwdTempPath()
@@ -121,11 +140,59 @@ function executeCommand(
     const stderrChunks: Buffer[] = []
     let interrupted = false
     let resolved = false
+    const startedAt = Date.now()
 
     // Wait for exit + both stream ends before resolving (exit fires before pipes drain)
     let exitInfo: { code: number | null; signal: NodeJS.Signals | null } | null = null
     let stdoutEnded = false
     let stderrEnded = false
+
+    // Coalesce progress emits to avoid two pathological cases:
+    //   (a) silent long commands rebuilding the (unchanged) buffer every
+    //       heartbeat tick — short-circuit when bytes & elapsed-second are
+    //       both unchanged;
+    //   (b) chatty commands emitting on every chunk — throttle to PROGRESS_
+    //       MIN_INTERVAL_MS so we never re-render the REPL more than ~10×/sec.
+    let stdoutBytes = 0
+    let stderrBytes = 0
+    let lastEmittedStdoutBytes = -1
+    let lastEmittedStderrBytes = -1
+    let lastEmittedSecond = -1
+    let lastEmittedAt = 0
+
+    const emitProgress = onProgress
+      ? () => {
+          const now = Date.now()
+          const currentSecond = Math.floor((now - startedAt) / 1000)
+          const bytesUnchanged =
+            stdoutBytes === lastEmittedStdoutBytes &&
+            stderrBytes === lastEmittedStderrBytes
+          if (bytesUnchanged) {
+            // Heartbeat tick with no new bytes — only emit when the elapsed
+            // clock would actually advance.
+            if (currentSecond === lastEmittedSecond) return
+          } else {
+            // Chunk arrived — throttle to keep re-render rate sane on chatty
+            // commands like `npm install`.
+            if (now - lastEmittedAt < PROGRESS_MIN_INTERVAL_MS) return
+          }
+          lastEmittedStdoutBytes = stdoutBytes
+          lastEmittedStderrBytes = stderrBytes
+          lastEmittedSecond = currentSecond
+          lastEmittedAt = now
+          onProgress({
+            stdout: Buffer.concat(stdoutChunks).toString('utf8'),
+            stderr: Buffer.concat(stderrChunks).toString('utf8'),
+            elapsedMs: now - startedAt,
+          })
+        }
+      : null
+
+    // Heartbeat: ensure long-running commands surface elapsed time even when
+    // they produce no output. Cleared on resolve so we never leak timers.
+    const heartbeat = emitProgress
+      ? setInterval(emitProgress, 1_000)
+      : null
 
     const child: ChildProcess = spawn(SHELL_PATH, ['-c', wrappedCommand], {
       cwd: getCwd(),
@@ -139,10 +206,14 @@ function executeCommand(
 
     child.stdout?.on('data', (chunk: Buffer) => {
       stdoutChunks.push(chunk)
+      stdoutBytes += chunk.length
+      emitProgress?.()
     })
 
     child.stderr?.on('data', (chunk: Buffer) => {
       stderrChunks.push(chunk)
+      stderrBytes += chunk.length
+      emitProgress?.()
     })
 
     function tryResolve() {
@@ -150,6 +221,7 @@ function executeCommand(
       resolved = true
 
       clearTimeout(timer)
+      if (heartbeat) clearInterval(heartbeat)
       abortSignal.removeEventListener('abort', onAbort)
 
       const { code, signal } = exitInfo
@@ -213,6 +285,7 @@ function executeCommand(
       resolved = true
 
       clearTimeout(timer)
+      if (heartbeat) clearInterval(heartbeat)
       abortSignal.removeEventListener('abort', onAbort)
       child.stdout?.destroy()
       child.stderr?.destroy()
@@ -301,6 +374,7 @@ export function bashToolDef(): ToolDef<BashToolInput, BashToolOutput> {
     },
     renderToolUseMessage,
     renderToolResultMessage,
+    renderToolUseProgressMessage,
     isResultTruncated,
     getActivityDescription,
 
@@ -312,6 +386,7 @@ export function bashToolDef(): ToolDef<BashToolInput, BashToolOutput> {
           input.command,
           timeoutMs,
           context.abortController.signal,
+          context.onProgress,
         ),
       }
     },

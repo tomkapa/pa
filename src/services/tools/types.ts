@@ -19,6 +19,31 @@ export interface ToolResultRenderOptions {
   style?: 'condensed'
 }
 
+export interface ToolProgressRenderOptions {
+  verbose: boolean
+  /** Terminal width in columns — used to constrain output width. */
+  columns?: number
+  /** How many tools are running in parallel right now (for compact rendering). */
+  inProgressToolCount?: number
+}
+
+// ---------------------------------------------------------------------------
+// ProgressMessage — UI-only progress event tied to a specific tool_use_id
+//
+// Each tool defines its own `data` shape (e.g., BashProgress carries
+// stdout/stderr buffers). Progress messages are surfaced in the UI while
+// the tool is running and discarded once the tool result arrives — they
+// are NEVER serialized to the API.
+// ---------------------------------------------------------------------------
+
+export interface ProgressMessage<Data = unknown> {
+  type: 'progress'
+  toolUseId: string
+  toolName: string
+  data: Data
+  timestamp: string
+}
+
 // ---------------------------------------------------------------------------
 // Permission & Validation results
 // ---------------------------------------------------------------------------
@@ -41,6 +66,15 @@ export interface ToolUseContext {
     debug: boolean
     verbose: boolean
   }
+  /**
+   * Optional progress emitter — invoked by tools to stream UI-only progress
+   * data (e.g., live shell output) while the tool is executing. The execution
+   * layer wires this to a queue that yields `progress` events on the tool
+   * generator. Tools may call this any number of times before returning;
+   * each call's `data` is rendered by the tool's `renderToolUseProgressMessage`.
+   * Never sent to the API.
+   */
+  onProgress?: (data: unknown) => void
 }
 
 // ---------------------------------------------------------------------------
@@ -90,6 +124,15 @@ export interface Tool<Input = unknown, Output = unknown> {
   renderToolUseMessage?(input: Partial<Input>, options: ToolRenderOptions): ReactNode
   renderToolResultMessage?(output: Output, options: ToolResultRenderOptions): ReactNode
   renderToolUseErrorMessage?(errorText: string, options: ToolRenderOptions): ReactNode
+  /**
+   * Live progress UI shown while the tool is executing. Receives every
+   * progress event emitted so far for this tool_use_id (most recent last).
+   * Returning null disables progress rendering for this tool.
+   */
+  renderToolUseProgressMessage?(
+    progressMessages: ProgressMessage[],
+    options: ToolProgressRenderOptions,
+  ): ReactNode
   getToolUseSummary?(input?: Partial<Input>): string | null
   getActivityDescription?(input?: Partial<Input>): string | null
   isResultTruncated?(output: Output): boolean
@@ -121,6 +164,10 @@ export interface ToolDef<Input = unknown, Output = unknown> {
   renderToolUseMessage?(input: Partial<Input>, options: ToolRenderOptions): ReactNode
   renderToolResultMessage?(output: Output, options: ToolResultRenderOptions): ReactNode
   renderToolUseErrorMessage?(errorText: string, options: ToolRenderOptions): ReactNode
+  renderToolUseProgressMessage?(
+    progressMessages: ProgressMessage[],
+    options: ToolProgressRenderOptions,
+  ): ReactNode
   getToolUseSummary?(input?: Partial<Input>): string | null
   getActivityDescription?(input?: Partial<Input>): string | null
   isResultTruncated?(output: Output): boolean

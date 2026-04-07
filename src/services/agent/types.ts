@@ -1,9 +1,9 @@
 import type { ContentBlockParam } from '@anthropic-ai/sdk/resources/messages/messages'
 import type { Message, UserMessage, SystemMessage } from '../../types/message.js'
 import type { QueryEvent, StreamEvent } from '../../types/streamEvents.js'
-import type { ToolBatchEvent, ToolUseBlock } from '../tools/execution/types.js'
+import type { ProgressEvent, ToolBatchEvent, ToolUseBlock } from '../tools/execution/types.js'
 
-export type { Message, UserMessage, SystemMessage, QueryEvent, ContentBlockParam }
+export type { Message, UserMessage, SystemMessage, QueryEvent, ContentBlockParam, ProgressEvent }
 
 export type TerminalReason =
   | 'completed'
@@ -51,7 +51,7 @@ export interface AgentQueryParams {
   deps: QueryDeps
 }
 
-export type AgentEvent = StreamEvent | Message
+export type AgentEvent = StreamEvent | Message | ProgressEvent
 
 export interface LoopState {
   messages: Message[]

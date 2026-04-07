@@ -1,5 +1,5 @@
 import { Text, Box } from '../ink.js'
-import type { Tool } from '../services/tools/types.js'
+import type { ProgressMessage, Tool } from '../services/tools/types.js'
 import { findToolByName } from '../services/tools/registry.js'
 
 // ---------------------------------------------------------------------------
@@ -57,6 +57,43 @@ export function AssistantToolUseBlock({
       )}
     </Box>
   )
+}
+
+// ---------------------------------------------------------------------------
+// ToolUseProgressBlock — live progress UI shown WHILE a tool is running.
+// Dispatches to the tool's renderToolUseProgressMessage; renders nothing
+// for tools that don't define one (the rest of the UI keeps the spinner).
+// ---------------------------------------------------------------------------
+
+interface ToolUseProgressBlockProps {
+  toolName: string
+  progressMessages: ProgressMessage[]
+  tools: Tool<unknown, unknown>[]
+  verbose: boolean
+  columns?: number
+  inProgressToolCount?: number
+}
+
+export function ToolUseProgressBlock({
+  toolName,
+  progressMessages,
+  tools,
+  verbose,
+  columns,
+  inProgressToolCount,
+}: ToolUseProgressBlockProps) {
+  const tool = findToolByName(tools, toolName)
+  if (!tool?.renderToolUseProgressMessage) return null
+  if (progressMessages.length === 0) return null
+
+  const rendered = tool.renderToolUseProgressMessage(progressMessages, {
+    verbose,
+    columns,
+    inProgressToolCount,
+  })
+  if (rendered == null) return null
+
+  return <Box paddingLeft={2}>{rendered}</Box>
 }
 
 // ---------------------------------------------------------------------------

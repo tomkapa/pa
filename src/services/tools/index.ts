@@ -11,6 +11,8 @@ export type {
   ToolResultBlockParam,
   ToolRenderOptions,
   ToolResultRenderOptions,
+  ToolProgressRenderOptions,
+  ProgressMessage,
 } from './types.js'
 export {
   all,
@@ -31,4 +33,5 @@ export type {
   ToolExecutionEvent,
   RunToolsEvent,
   ToolBatchEvent,
+  ProgressEvent,
 } from './execution/index.js'

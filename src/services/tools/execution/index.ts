@@ -12,5 +12,6 @@ export type {
   ToolExecutionEvent,
   RunToolsEvent,
   ToolBatchEvent,
+  ProgressEvent,
 } from './types.js'
 export { DEFAULT_CONCURRENCY_CAP, MAX_RESULT_CHARS } from './types.js'

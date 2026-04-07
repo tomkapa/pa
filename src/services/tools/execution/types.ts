@@ -47,6 +47,18 @@ export interface Batch {
 // Events yielded by the execution engine
 // ---------------------------------------------------------------------------
 
+export interface ProgressEvent {
+  type: 'progress'
+  /** ID of the tool_use block this progress is reporting on. */
+  toolUseId: string
+  /** Tool name (so the renderer can dispatch by tool without a registry lookup). */
+  toolName: string
+  /** Tool-specific progress payload (e.g., BashProgress). */
+  data: unknown
+  /** ISO-8601 timestamp — useful for rendering elapsed time and dedup. */
+  timestamp: string
+}
+
 export type ToolExecutionEvent =
   | {
       type: 'tool_result'
@@ -54,12 +66,7 @@ export type ToolExecutionEvent =
       contextModifiers: ContextModifier[]
       newMessages?: Message[]
     }
-  | {
-      type: 'progress'
-      toolUseId: string
-      toolName: string
-      content: string
-    }
+  | ProgressEvent
 
 export type RunToolsEvent =
   | ToolExecutionEvent
@@ -71,7 +78,7 @@ export type RunToolsEvent =
 
 export type ToolBatchEvent =
   | { type: 'tool_result'; message: UserMessage }
-  | { type: 'progress'; toolUseId: string; toolName: string; content: string }
+  | ProgressEvent
 
 // ---------------------------------------------------------------------------
 // Constants

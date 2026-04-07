@@ -181,6 +181,12 @@ export async function* queryLoop(
         assistantMessageUUID: assistantMessage.uuid,
         abortSignal,
       })) {
+        if (event.type === 'progress') {
+          // UI-only — yield to consumers (REPL) but don't push to history.
+          // Progress events are never serialized to the API.
+          yield event
+          continue
+        }
         if (event.type !== 'tool_result') continue
         yield event.message
         state.messages.push(event.message)

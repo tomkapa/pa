@@ -3,11 +3,13 @@ import { findToolByName } from '../registry.js'
 import { createUserMessage } from '../../messages/factory.js'
 import { getErrorMessage } from '../../../utils/error.js'
 import { isEmptyContent, maybeTruncateLargeResult } from './result-size.js'
+import { Stream } from './stream.js'
 import type {
   ToolUseBlock,
   CanUseToolFn,
   ContextModifier,
   ToolExecutionEvent,
+  ProgressEvent,
 } from './types.js'
 
 /**
@@ -74,9 +76,39 @@ export async function* runToolUse(
   }
   const permittedInput = permission.updatedInput
 
+  // Bridge tool.call's synchronous onProgress callback into our async generator.
+  // The tool may emit progress events any number of times before its Promise
+  // resolves; we yield each one as it arrives, then yield the final tool_result.
+  const progressStream = new Stream<ProgressEvent>()
+  const progressContext: ToolUseContext = {
+    ...context,
+    onProgress: (data: unknown) => {
+      progressStream.enqueue({
+        type: 'progress',
+        toolUseId: toolUseID,
+        toolName,
+        data,
+        timestamp: new Date().toISOString(),
+      })
+    },
+  }
+
+  // .finally() runs synchronously when the call settles, so the stream is
+  // closed before the for-await drain reaches its next pull — no lost events.
+  const callPromise = tool
+    .call(permittedInput, progressContext)
+    .finally(() => progressStream.done())
+  // Mark as handled so a rejection during the drain below doesn't surface
+  // as an unhandled-rejection warning before we reach the `await` site.
+  callPromise.catch(() => {})
+
+  for await (const event of progressStream) {
+    yield event
+  }
+
   let toolResult: Awaited<ReturnType<Tool['call']>>
   try {
-    toolResult = await tool.call(permittedInput, context)
+    toolResult = await callPromise
   } catch (error: unknown) {
     yield makeErrorResult(
       toolUseID,

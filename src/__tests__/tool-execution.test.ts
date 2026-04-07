@@ -706,6 +706,104 @@ describe('runToolUse', () => {
     const calledInput = callSpy.mock.calls[0]![0]
     expect(calledInput).toEqual({ message: 'transformed' })
   })
+
+  // ─── Progress events ───────────────────────────────────────────────────
+
+  test('forwards onProgress calls as progress events with toolUseId', async () => {
+    const tool = buildTool(makeToolDef({
+      async call(input, ctx) {
+        ctx.onProgress?.({ stage: 'starting' })
+        ctx.onProgress?.({ stage: 'midway', percent: 50 })
+        return { data: input.message }
+      },
+    }))
+    const context = makeContext([tool])
+    const block = makeToolUseBlock('progress-tu-1', 'Echo', { message: 'hi' })
+
+    const events = await collectGen(
+      runToolUse(block, [tool], defaultCanUseTool, context, 'asst-uuid'),
+    )
+
+    const progressEvents = events.filter(e => e.type === 'progress')
+    expect(progressEvents).toHaveLength(2)
+    for (const ev of progressEvents) {
+      if (ev.type !== 'progress') throw new Error('unreachable')
+      expect(ev.toolUseId).toBe('progress-tu-1')
+      expect(ev.toolName).toBe('Echo')
+      expect(typeof ev.timestamp).toBe('string')
+    }
+    if (progressEvents[0]!.type === 'progress') {
+      expect(progressEvents[0]!.data).toEqual({ stage: 'starting' })
+    }
+    if (progressEvents[1]!.type === 'progress') {
+      expect(progressEvents[1]!.data).toEqual({ stage: 'midway', percent: 50 })
+    }
+
+    // Final tool_result is still emitted after all progress events
+    const last = events[events.length - 1]!
+    expect(last.type).toBe('tool_result')
+  })
+
+  test('progress events are yielded BEFORE the tool_result', async () => {
+    const tool = buildTool(makeToolDef({
+      async call(input, ctx) {
+        ctx.onProgress?.({ tag: 'first' })
+        // Microtask gap to give the generator a chance to drain progress
+        await Promise.resolve()
+        ctx.onProgress?.({ tag: 'second' })
+        return { data: input.message }
+      },
+    }))
+    const context = makeContext([tool])
+    const block = makeToolUseBlock('order-tu', 'Echo', { message: 'go' })
+
+    const events = await collectGen(
+      runToolUse(block, [tool], defaultCanUseTool, context, 'asst-uuid'),
+    )
+
+    expect(events.map(e => e.type)).toEqual(['progress', 'progress', 'tool_result'])
+  })
+
+  test('does not emit progress events when tool never calls onProgress', async () => {
+    const tool = buildTool(makeToolDef())
+    const context = makeContext([tool])
+    const block = makeToolUseBlock('quiet-tu', 'Echo', { message: 'hi' })
+
+    const events = await collectGen(
+      runToolUse(block, [tool], defaultCanUseTool, context, 'asst-uuid'),
+    )
+
+    expect(events.filter(e => e.type === 'progress')).toHaveLength(0)
+    expect(events.filter(e => e.type === 'tool_result')).toHaveLength(1)
+  })
+
+  test('progress emitted right before throwing is still surfaced', async () => {
+    const tool = buildTool(makeToolDef({
+      async call(_input, ctx) {
+        ctx.onProgress?.({ tag: 'about-to-fail' })
+        throw new Error('boom')
+      },
+    }))
+    const context = makeContext([tool])
+    const block = makeToolUseBlock('fail-tu', 'Echo', { message: 'hi' })
+
+    const events = await collectGen(
+      runToolUse(block, [tool], defaultCanUseTool, context, 'asst-uuid'),
+    )
+
+    const progressEvents = events.filter(e => e.type === 'progress')
+    expect(progressEvents).toHaveLength(1)
+
+    // We still get the error tool_result at the end
+    const last = events[events.length - 1]!
+    expect(last.type).toBe('tool_result')
+    if (last.type === 'tool_result') {
+      const content = last.message.message.content
+      if (Array.isArray(content)) {
+        expect((content[0] as { content: string }).content).toContain('boom')
+      }
+    }
+  })
 })
 
 // ═══════════════════════════════════════════════════════════════════════

@@ -3,10 +3,12 @@ import { Box, Text, useInput, useApp } from './ink.js'
 import { TextInput } from './components/text-input.js'
 import { ModeIndicator } from './components/mode-indicator.js'
 import { PermissionRequest } from './components/permission-dialog.js'
-import { AssistantToolUseBlock, UserToolResultBlock } from './components/tool-messages.js'
+import { AssistantToolUseBlock, ToolUseProgressBlock, UserToolResultBlock } from './components/tool-messages.js'
 import type { Message } from './types/message.js'
 import type { AgentEvent, QueryDeps } from './services/agent/types.js'
+import type { ProgressMessage } from './services/tools/types.js'
 import { createUserMessage, createSystemMessage } from './services/messages/factory.js'
+import { isToolResultBlock } from './services/messages/predicates.js'
 import { query } from './services/agent/query.js'
 import { createQueryDeps } from './services/agent/deps.js'
 import { createAnthropicClient } from './services/api/client.js'
@@ -85,9 +87,19 @@ interface MessageViewProps {
   message: Message
   tools: Tool<unknown, unknown>[]
   verbose: boolean
+  /** Latest progress message keyed by tool_use_id, for in-flight tool calls. */
+  latestProgressByToolUseId: Map<string, ProgressMessage>
+  /** Number of tools currently running — passed to progress renderers. */
+  inProgressToolCount: number
 }
 
-function MessageView({ message, tools, verbose }: MessageViewProps) {
+function MessageView({
+  message,
+  tools,
+  verbose,
+  latestProgressByToolUseId,
+  inProgressToolCount,
+}: MessageViewProps) {
   if (message.type === 'user' && !message.isMeta) {
     return <Text color="green">{`> ${getUserInputText(message)}`}</Text>
   }
@@ -101,14 +113,34 @@ function MessageView({ message, tools, verbose }: MessageViewProps) {
             return block.text ? <Text key={i}>{block.text}</Text> : null
           }
           if (block.type === 'tool_use') {
+            const latest = latestProgressByToolUseId.get(block.id)
+            if (!latest) {
+              return (
+                <AssistantToolUseBlock
+                  key={i}
+                  toolName={block.name}
+                  toolInput={block.input}
+                  tools={tools}
+                  verbose={verbose}
+                />
+              )
+            }
             return (
-              <AssistantToolUseBlock
-                key={i}
-                toolName={block.name}
-                toolInput={block.input}
-                tools={tools}
-                verbose={verbose}
-              />
+              <Box key={i} flexDirection="column">
+                <AssistantToolUseBlock
+                  toolName={block.name}
+                  toolInput={block.input}
+                  tools={tools}
+                  verbose={verbose}
+                />
+                <ToolUseProgressBlock
+                  toolName={block.name}
+                  progressMessages={[latest]}
+                  tools={tools}
+                  verbose={verbose}
+                  inProgressToolCount={inProgressToolCount}
+                />
+              </Box>
             )
           }
           return null
@@ -217,6 +249,9 @@ export function REPL({ deps: injectedDeps }: REPLProps) {
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(false)
+  const [latestProgressByToolUseId, setLatestProgressByToolUseId] = useState<Map<string, ProgressMessage>>(
+    () => new Map(),
+  )
   const isLoadingRef = useRef(false)
   const abortControllerRef = useRef<AbortController | null>(null)
   const messagesRef = useRef<Message[]>(messages)
@@ -266,7 +301,28 @@ export function REPL({ deps: injectedDeps }: REPLProps) {
         return [...prev, event]
       })
     } else if (event.type === 'user' || event.type === 'system') {
+      // When a tool_result arrives, drop the matching tool's in-flight progress
+      // so it doesn't keep occupying screen space below the rendered result.
+      if (event.type === 'user' && event.isMeta && Array.isArray(event.message.content)) {
+        const finishedIds = event.message.content
+          .filter(isToolResultBlock)
+          .map(b => b.tool_use_id)
+        if (finishedIds.length > 0) {
+          setLatestProgressByToolUseId(prev => {
+            if (!finishedIds.some(id => prev.has(id))) return prev
+            const next = new Map(prev)
+            for (const id of finishedIds) next.delete(id)
+            return next
+          })
+        }
+      }
       setMessages(prev => [...prev, event])
+    } else if (event.type === 'progress') {
+      setLatestProgressByToolUseId(prev => {
+        const next = new Map(prev)
+        next.set(event.toolUseId, event)
+        return next
+      })
     }
     // stream_event: ignored for now (streaming display is a future enhancement)
   }, [])
@@ -277,6 +333,7 @@ export function REPL({ deps: injectedDeps }: REPLProps) {
     const userMessage = createUserMessage({ content: value })
     const updatedMessages = [...messagesRef.current, userMessage]
     setMessages(updatedMessages)
+    setLatestProgressByToolUseId(new Map())
     setInput('')
 
     const abortController = new AbortController()
@@ -317,6 +374,10 @@ export function REPL({ deps: injectedDeps }: REPLProps) {
       isLoadingRef.current = false
       setIsLoading(false)
       abortControllerRef.current = null
+      // Drop any progress entries left over from in-flight tools (abort, error,
+      // or a tool whose result never reached us). Otherwise stale "(running …)"
+      // UI sticks around until the next submit.
+      setLatestProgressByToolUseId(prev => (prev.size === 0 ? prev : new Map()))
     }
   }, [replDeps, onQueryEvent, pushConfirm])
 
@@ -335,7 +396,14 @@ export function REPL({ deps: injectedDeps }: REPLProps) {
   return (
     <Box flexDirection="column">
       {messages.map(msg => (
-        <MessageView key={msg.uuid} message={msg} tools={replDeps.tools} verbose={false} />
+        <MessageView
+          key={msg.uuid}
+          message={msg}
+          tools={replDeps.tools}
+          verbose={false}
+          latestProgressByToolUseId={latestProgressByToolUseId}
+          inProgressToolCount={latestProgressByToolUseId.size}
+        />
       ))}
       {isLoading && <Text color="yellow">Thinking...</Text>}
       {activeConfirm && (

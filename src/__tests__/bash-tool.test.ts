@@ -2,7 +2,7 @@ import { describe, expect, test, beforeEach, afterEach } from 'bun:test'
 import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { bashToolDef, resetCwd, type BashToolInput, type BashToolOutput } from '../tools/bashTool.js'
+import { bashToolDef, resetCwd, type BashProgress, type BashToolInput, type BashToolOutput } from '../tools/bashTool.js'
 import { buildTool } from '../services/tools/index.js'
 import { makeContext } from '../testing/make-context.js'
 
@@ -335,6 +335,120 @@ describe('Bash tool — metadata', () => {
     const schema = def.inputSchema
 
     expect(schema.safeParse({ command: 'ls', unknown: true }).success).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Progress UI renderer
+// ---------------------------------------------------------------------------
+
+describe('Bash tool — renderToolUseProgressMessage', () => {
+  test('returns null when no progress messages have arrived yet', async () => {
+    const { renderToolUseProgressMessage } = await import('../tools/bashToolUI.js')
+    const result = renderToolUseProgressMessage([], { verbose: false })
+    expect(result).toBeNull()
+  })
+
+  test('returns a non-null React node when given a BashProgress payload', async () => {
+    const { renderToolUseProgressMessage } = await import('../tools/bashToolUI.js')
+    const result = renderToolUseProgressMessage(
+      [{
+        type: 'progress',
+        toolUseId: 'tu-1',
+        toolName: 'Bash',
+        timestamp: new Date().toISOString(),
+        data: { stdout: 'hello\n', stderr: '', elapsedMs: 1234 } satisfies BashProgress,
+      }],
+      { verbose: false, columns: 80 },
+    )
+    expect(result).not.toBeNull()
+  })
+
+  test('returns null when the latest progress payload is not a BashProgress', async () => {
+    const { renderToolUseProgressMessage } = await import('../tools/bashToolUI.js')
+    const result = renderToolUseProgressMessage(
+      [{
+        type: 'progress',
+        toolUseId: 'tu-1',
+        toolName: 'Bash',
+        timestamp: new Date().toISOString(),
+        data: { unrelated: 'shape' },
+      }],
+      { verbose: false },
+    )
+    expect(result).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Progress streaming
+// ---------------------------------------------------------------------------
+
+describe('Bash tool — progress streaming', () => {
+  test('emits progress events containing accumulated stdout', async () => {
+    const def = bashToolDef()
+    const tool = buildTool(def)
+    const progresses: BashProgress[] = []
+    const ctx = makeContext({
+      onProgress: (data: unknown) => progresses.push(data as BashProgress),
+    })
+
+    const result = await tool.call({ command: 'echo hello' }, ctx)
+
+    expect(result.data.stdout.trim()).toBe('hello')
+    // At least one progress event should have arrived (the 'data' from echo).
+    expect(progresses.length).toBeGreaterThan(0)
+    // The final progress payload should match the final accumulated stdout.
+    const last = progresses[progresses.length - 1]!
+    expect(last.stdout.trim()).toBe('hello')
+    expect(typeof last.elapsedMs).toBe('number')
+    expect(last.elapsedMs).toBeGreaterThanOrEqual(0)
+  })
+
+  test('progress carries stderr separately from stdout', async () => {
+    const def = bashToolDef()
+    const tool = buildTool(def)
+    const progresses: BashProgress[] = []
+    const ctx = makeContext({
+      onProgress: (data: unknown) => progresses.push(data as BashProgress),
+    })
+
+    await tool.call({ command: 'echo bad >&2' }, ctx)
+
+    expect(progresses.length).toBeGreaterThan(0)
+    const withStderr = progresses.find(p => p.stderr.includes('bad'))
+    expect(withStderr).toBeDefined()
+  })
+
+  test('does not emit progress when context.onProgress is omitted', async () => {
+    const def = bashToolDef()
+    const tool = buildTool(def)
+    // makeContext with no onProgress — the call should still succeed without errors.
+    const result = await tool.call({ command: 'echo silent' }, makeContext())
+
+    expect(result.data.stdout.trim()).toBe('silent')
+    expect(result.data.exitCode).toBe(0)
+  })
+
+  test('multiple chunks generate multiple progress events', async () => {
+    const def = bashToolDef()
+    const tool = buildTool(def)
+    const progresses: BashProgress[] = []
+    const ctx = makeContext({
+      onProgress: (data: unknown) => progresses.push(data as BashProgress),
+    })
+
+    // Sleep > PROGRESS_MIN_INTERVAL_MS so the second chunk isn't coalesced
+    // with the first by the chunk-emit throttle.
+    await tool.call(
+      { command: 'echo first; sleep 0.2; echo second' },
+      ctx,
+    )
+
+    expect(progresses.length).toBeGreaterThanOrEqual(2)
+    const last = progresses[progresses.length - 1]!
+    expect(last.stdout).toContain('first')
+    expect(last.stdout).toContain('second')
   })
 })
 

@@ -233,6 +233,60 @@ describe('agent loop', () => {
       expect(types).toContain('user')
     })
 
+    test('forwards progress events from tool execution to consumers', async () => {
+      let uuidCounter = 0
+      const uuidFn = () => `uuid-${++uuidCounter}`
+
+      // Custom batch executor that interleaves progress events with the result.
+      const executeToolBatch: QueryDeps['executeToolBatch'] = async function* ({
+        toolUseBlocks,
+        assistantMessageUUID,
+      }) {
+        for (const block of toolUseBlocks) {
+          yield {
+            type: 'progress',
+            toolUseId: block.id,
+            toolName: block.name,
+            data: { stage: 'starting' },
+            timestamp: new Date().toISOString(),
+          }
+          yield {
+            type: 'progress',
+            toolUseId: block.id,
+            toolName: block.name,
+            data: { stage: 'midway' },
+            timestamp: new Date().toISOString(),
+          }
+          yield makeToolResultEvent(block.id, 'ok', false, assistantMessageUUID, uuidFn())
+        }
+      }
+
+      const deps = createDeps({
+        callModel: sequentialCallModel([
+          createAssistantMsg([toolUseBlock('toolu_p', 'streamy', {})], 'tool_use'),
+          createAssistantMsg([textBlock('Done')]),
+        ]),
+        executeToolBatch,
+        uuid: uuidFn,
+      })
+
+      const { events, terminal } = await collectAll(query(baseParams({ deps })))
+
+      expect(terminal.reason).toBe('completed')
+
+      const progressEvents = events.filter(e => e.type === 'progress')
+      expect(progressEvents).toHaveLength(2)
+      for (const ev of progressEvents) {
+        if (ev.type !== 'progress') throw new Error('unreachable')
+        expect(ev.toolUseId).toBe('toolu_p')
+        expect(ev.toolName).toBe('streamy')
+      }
+
+      // The progress events do NOT enter the message history (they're UI-only)
+      const userMessages = events.filter(e => e.type === 'user')
+      expect(userMessages.length).toBe(1)
+    })
+
     test('executes multiple tools from a single model response', async () => {
       const executeFn = mock(async (tu: ToolUseInfo) => ({
         content: `result-${tu.id}`,
