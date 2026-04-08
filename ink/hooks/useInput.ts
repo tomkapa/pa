@@ -1,5 +1,12 @@
 import { useLayoutEffect, useContext, useRef } from 'react'
 import { StdinContext } from '../components/contexts.js'
+import {
+  type ParsedMouse,
+  isWheelEvent,
+  getBaseButton,
+  MOUSE_BUTTON_LEFT,
+  MOUSE_BUTTON_MIDDLE,
+} from '../mouse/types.js'
 
 // ---------------------------------------------------------------------------
 // Key descriptor matching Ink's API
@@ -20,6 +27,10 @@ export interface Key {
   backspace: boolean
   delete: boolean
   meta: boolean
+  // Synthetic wheel "keys" — wheel events are routed through the keyboard
+  // pipeline because they behave like scroll keys, not like clicks.
+  wheelup: boolean
+  wheeldown: boolean
 }
 
 export type InputHandler = (input: string, key: Key) => void
@@ -27,6 +38,14 @@ export type InputHandler = (input: string, key: Key) => void
 export interface UseInputOptions {
   isActive?: boolean
 }
+
+// ---------------------------------------------------------------------------
+// Discriminated union returned by parseInput
+// ---------------------------------------------------------------------------
+
+export type ParsedEvent =
+  | { kind: 'key'; input: string; key: Key }
+  | { kind: 'mouse'; mouse: ParsedMouse }
 
 // ---------------------------------------------------------------------------
 // Parse raw terminal input
@@ -52,19 +71,56 @@ function baseKey(): Key {
     backspace: false,
     delete: false,
     meta: false,
+    wheelup: false,
+    wheeldown: false,
   }
 }
 
 const BRACKETED_PASTE_START = '\x1b[200~'
 const BRACKETED_PASTE_END = '\x1b[201~'
 
-export function parseInput(data: string): Array<{ input: string; key: Key }> {
-  const results: Array<{ input: string; key: Key }> = []
+// Match `ESC[<button;col;row M|m` anchored at the cursor position. The regex
+// is anchored implicitly via `data.slice(i).match(...)` returning at index 0.
+const SGR_MOUSE_RE = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])/
+
+function parseSgrMouseAt(data: string, i: number): { event: ParsedEvent; consumed: number } | null {
+  // Quick prefix check before running the regex.
+  if (data.charCodeAt(i) !== 0x1b) return null
+  if (data[i + 1] !== '[' || data[i + 2] !== '<') return null
+
+  const match = data.slice(i).match(SGR_MOUSE_RE)
+  if (!match) return null
+
+  const button = Number(match[1])
+  const col = Number(match[2])
+  const row = Number(match[3])
+  const terminator = match[4]
+  const sequence = match[0]
+
+  // Wheel events are routed back through the keyboard system as synthetic
+  // wheelup/wheeldown keys — they behave like scroll keys, not clicks.
+  if (isWheelEvent(button)) {
+    const key = baseKey()
+    const base = getBaseButton(button)
+    if (base === MOUSE_BUTTON_LEFT)        key.wheelup = true
+    else if (base === MOUSE_BUTTON_MIDDLE) key.wheeldown = true
+    // Other base values (2, 3) come from horizontal wheels — ignore for now;
+    // they have no obvious mapping to a keyboard scroll key.
+    return { event: { kind: 'key', input: '', key }, consumed: sequence.length }
+  }
+
+  const action: 'press' | 'release' = terminator === 'M' ? 'press' : 'release'
+  const mouse: ParsedMouse = { kind: 'mouse', button, action, col, row, sequence }
+  return { event: { kind: 'mouse', mouse }, consumed: sequence.length }
+}
+
+export function parseInput(data: string): ParsedEvent[] {
+  const results: ParsedEvent[] = []
   let regularChars = ''
 
   const flush = () => {
     if (regularChars) {
-      results.push({ input: regularChars, key: baseKey() })
+      results.push({ kind: 'key', input: regularChars, key: baseKey() })
       regularChars = ''
     }
   }
@@ -80,8 +136,19 @@ export function parseInput(data: string): Array<{ input: string; key: Key }> {
         ? data.slice(i, endIdx)
         : data.slice(i)
       // Normalise \r and \r\n to \n within the pasted block
-      results.push({ input: pasteContent.replace(/\r\n?/g, '\n'), key: baseKey() })
+      results.push({ kind: 'key', input: pasteContent.replace(/\r\n?/g, '\n'), key: baseKey() })
       i = endIdx >= 0 ? endIdx + BRACKETED_PASTE_END.length : data.length
+      continue
+    }
+
+    // SGR mouse sequence: must be checked before generic ESC handling so we
+    // don't fall through to `key.escape = true; i += 2` and leak the rest of
+    // the sequence as bogus regular-char input.
+    const mouseMatch = parseSgrMouseAt(data, i)
+    if (mouseMatch) {
+      flush()
+      results.push(mouseMatch.event)
+      i += mouseMatch.consumed
       continue
     }
 
@@ -107,43 +174,43 @@ export function parseInput(data: string): Array<{ input: string; key: Key }> {
         else if (seq.startsWith('1;2C')) { key.shift = true; key.rightArrow = true; i += 6 }
         else if (seq.startsWith('1;2D')) { key.shift = true; key.leftArrow = true; i += 6 }
         else { key.escape = true; i += 2 }
-        results.push({ input: '', key })
+        results.push({ kind: 'key', input: '', key })
       } else if (i + 1 < data.length) {
         key.meta = true
-        results.push({ input: data[i + 1]!, key })
+        results.push({ kind: 'key', input: data[i + 1]!, key })
         i += 2
       } else {
         key.escape = true
         i += 1
-        results.push({ input: '', key })
+        results.push({ kind: 'key', input: '', key })
       }
     }
     else if (ch === '\r' || ch === '\n') {
       flush()
       const key = baseKey()
       key.return = true
-      results.push({ input: '', key })
+      results.push({ kind: 'key', input: '', key })
       i += 1
     }
     else if (ch === '\t') {
       flush()
       const key = baseKey()
       key.tab = true
-      results.push({ input: '', key })
+      results.push({ kind: 'key', input: '', key })
       i += 1
     }
     else if (ch === '\x7f' || ch === '\b') {
       flush()
       const key = baseKey()
       key.backspace = true
-      results.push({ input: '', key })
+      results.push({ kind: 'key', input: '', key })
       i += 1
     }
     else if (data.charCodeAt(i) <= 26) {
       flush()
       const key = baseKey()
       key.ctrl = true
-      results.push({ input: String.fromCharCode(data.charCodeAt(i) + 96), key })
+      results.push({ kind: 'key', input: String.fromCharCode(data.charCodeAt(i) + 96), key })
       i += 1
     }
     else {
@@ -177,7 +244,9 @@ export function useInput(handler: InputHandler, options?: UseInputOptions): void
       const str = String(data)
       const events = parseInput(str)
       for (const event of events) {
-        handlerRef.current(event.input, event.key)
+        if (event.kind === 'key') {
+          handlerRef.current(event.input, event.key)
+        }
       }
     }
 

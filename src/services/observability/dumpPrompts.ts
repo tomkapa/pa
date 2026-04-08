@@ -23,6 +23,10 @@ interface SessionDumpState {
   filePath: string
   messageCountSeen: number
   lastInitFingerprint: string
+  // Tail of the serial write queue. Each writeRecord chains onto this so
+  // records land in the file in the order they were enqueued — appendFile
+  // opens a fresh fd per call and concurrent calls would otherwise race.
+  writeTail: Promise<void>
 }
 
 interface RingBufferEntry {
@@ -68,6 +72,7 @@ function getOrCreateSessionState(): SessionDumpState {
     filePath: join(dir, `${getSessionId()}.jsonl`),
     messageCountSeen: 0,
     lastInitFingerprint: '',
+    writeTail: Promise.resolve(),
   }
   return sessionState
 }
@@ -93,13 +98,16 @@ function initFingerprint(req: Record<string, unknown>): string {
   return `${String(req['model'] ?? '')}|${toolNames}|${sysLen}`
 }
 
-function writeRecord(filePath: string, record: DumpRecord): void {
+function writeRecord(state: SessionDumpState, record: DumpRecord): void {
   const line = `${JSON.stringify(record)}\n`
-  trackPending(
-    appendFile(filePath, line).catch(() => {
-      // Debug logging must never crash the host process.
-    }),
-  )
+  // Chain onto the session's write tail so records land in enqueue order.
+  // We swallow errors on the chained promise so a failed write doesn't poison
+  // subsequent ones, but we still propagate the awaited result via trackPending.
+  const next = state.writeTail.then(() => appendFile(state.filePath, line)).catch(() => {
+    // Debug logging must never crash the host process.
+  })
+  state.writeTail = next
+  trackPending(next)
 }
 
 interface ParsedRequestBody {
@@ -139,10 +147,10 @@ function dispatchRequestRecords(
   if (!state.initialized) {
     state.initialized = true
     state.lastInitFingerprint = fingerprint
-    writeRecord(state.filePath, { type: 'init', timestamp, data: extractInitFields(req) })
+    writeRecord(state, { type: 'init', timestamp, data: extractInitFields(req) })
   } else if (fingerprint !== state.lastInitFingerprint) {
     state.lastInitFingerprint = fingerprint
-    writeRecord(state.filePath, {
+    writeRecord(state, {
       type: 'system_update',
       timestamp,
       data: extractInitFields(req),
@@ -151,7 +159,7 @@ function dispatchRequestRecords(
 
   const messages = Array.isArray(req.messages) ? (req.messages as unknown[]) : []
   for (let i = state.messageCountSeen; i < messages.length; i++) {
-    writeRecord(state.filePath, { type: 'message', timestamp, data: messages[i] })
+    writeRecord(state, { type: 'message', timestamp, data: messages[i] })
   }
   state.messageCountSeen = messages.length
 }
@@ -170,7 +178,7 @@ async function captureResponse(state: SessionDumpState, response: MinimalRespons
     if (contentType.includes('text/event-stream')) {
       const text = await response.text()
       const chunks = text.split(/\n\n/).filter(c => c.length > 0)
-      writeRecord(state.filePath, {
+      writeRecord(state, {
         type: 'response',
         timestamp,
         data: { streaming: true, status: response.status, chunks },
@@ -183,7 +191,7 @@ async function captureResponse(state: SessionDumpState, response: MinimalRespons
       } catch {
         // keep as raw text
       }
-      writeRecord(state.filePath, {
+      writeRecord(state, {
         type: 'response',
         timestamp,
         data: { streaming: false, status: response.status, body: parsed },

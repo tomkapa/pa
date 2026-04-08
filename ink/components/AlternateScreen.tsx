@@ -1,4 +1,4 @@
-import { type ReactNode, useContext, useInsertionEffect } from 'react'
+import { type ReactNode, useContext, useEffect, useInsertionEffect } from 'react'
 import { InkContext } from './contexts.js'
 import { useStdout } from '../hooks/useStdout.js'
 import { decset, decreset, enableMouseTracking, disableMouseTracking } from '../termio/dec.js'
@@ -26,6 +26,15 @@ export function AlternateScreen({ children, mouseTracking = false }: AlternateSc
       ink?.setAltScreen(false)
     }
   }, [])
+
+  // Some terminals drop mouse-tracking state on resize / SIGCONT. Re-emit
+  // the enable sequence on every resize so tracking survives those events.
+  useEffect(() => {
+    if (!mouseTracking) return
+    const onResize = () => { stdout.write(enableMouseTracking()) }
+    stdout.on('resize', onResize)
+    return () => { stdout.removeListener('resize', onResize) }
+  }, [stdout, mouseTracking])
 
   // Constrain content height to terminal viewport so layout fills the screen.
   return <Box height="100%">{children}</Box>

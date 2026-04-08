@@ -3,6 +3,7 @@ import { DefaultEventPriority } from 'react-reconciler/constants.js'
 import type { DOMElement, DOMTextNode, DOMNode } from './dom.js'
 import { createDOMElement, createDOMTextNode, appendChild, insertBefore, removeChild, freeNode, applyStyles, markTextNodeDirty } from './dom.js'
 import { STYLE_KEYS, type StyleProps } from './styles.js'
+import { EVENT_HANDLER_KEYS, type EventHandlers } from './mouse/types.js'
 
 // ---------------------------------------------------------------------------
 // Host context — tracks whether we're inside a <Text> element
@@ -29,6 +30,33 @@ function extractStyleProps(props: Props): StyleProps {
     }
   }
   return style
+}
+
+// ---------------------------------------------------------------------------
+// Event handlers are stored separately from style props so the mouse
+// dispatcher can look them up without walking attributes. We assign undefined
+// when no handler is present so a handler removal in commitUpdate is honoured.
+// ---------------------------------------------------------------------------
+
+function extractEventHandlers(props: Props): EventHandlers | undefined {
+  let result: EventHandlers | undefined
+  for (const key of EVENT_HANDLER_KEYS) {
+    const value = props[key]
+    if (typeof value === 'function') {
+      if (!result) result = {}
+      ;(result as Record<string, unknown>)[key] = value
+    }
+  }
+  return result
+}
+
+function applyEventHandlers(element: DOMElement, props: Props): void {
+  const handlers = extractEventHandlers(props)
+  if (handlers) {
+    element._eventHandlers = handlers
+  } else {
+    delete element._eventHandlers
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -74,6 +102,7 @@ export function createReconciler(
 
       const styleProps = extractStyleProps(props)
       applyStyles(element, styleProps)
+      applyEventHandlers(element, props)
 
       if (props.internal_static) {
         element.internal_static = true
@@ -127,6 +156,7 @@ export function createReconciler(
     commitUpdate(instance: DOMElement, _type: string, _prevProps: Props, nextProps: Props): void {
       const styleProps = extractStyleProps(nextProps)
       applyStyles(instance, styleProps)
+      applyEventHandlers(instance, nextProps)
     },
 
     commitTextUpdate(textInstance: DOMTextNode, _oldText: string, newText: string): void {

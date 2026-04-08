@@ -82,3 +82,5 @@ export { useStdout } from './hooks/useStdout.js'
 
 export type { StyleProps } from './styles.js'
 export type { DOMElement, DOMTextNode } from './dom.js'
+export type { ParsedMouse, EventHandlers } from './mouse/types.js'
+export { ClickEvent } from './mouse/types.js'

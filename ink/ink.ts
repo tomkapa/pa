@@ -12,6 +12,9 @@ import { cursorTo, cursorHide, cursorShow, resetStyle, eraseDown, bracketedPaste
 import { decreset, disableMouseTracking } from './termio/dec.js'
 import { throttle } from './throttle.js'
 import { FRAME_INTERVAL_MS } from './constants.js'
+import { parseInput } from './hooks/useInput.js'
+import { dispatchClick, dispatchHover } from './mouse/dispatch.js'
+import { isMotionEvent, getBaseButton, MOUSE_BUTTON_LEFT, type ParsedMouse } from './mouse/types.js'
 
 export interface InkOptions {
   stdout: NodeJS.WriteStream
@@ -46,8 +49,22 @@ export class Ink {
   private altScreenActive = false
   private readonly signalHandler: () => void
 
+  // Set of currently-hovered DOMElements (those with onMouseEnter/Leave) used
+  // by dispatchHover for diff-based enter/leave fires.
+  private readonly hoveredNodes: Set<DOMElement> = new Set()
+  // Track left-button drag state so we can fire `onClick` only on the press
+  // event (release events arrive separately and would otherwise double-fire).
+  private leftButtonDown = false
+
+  private readonly mouseStdinHandler: (data: Buffer) => void
+
   setAltScreen(active: boolean): void {
     this.altScreenActive = active
+    if (!active) {
+      // Drop hover state on alt-screen exit so re-entry starts clean.
+      this.hoveredNodes.clear()
+      this.leftButtonDown = false
+    }
   }
 
   constructor(options: InkOptions) {
@@ -102,9 +119,62 @@ export class Ink {
     process.on('SIGTERM', this.signalHandler)
     process.on('SIGINT', this.signalHandler)
 
+    // Mouse stdin listener — runs alongside useInput's listeners and is
+    // gated on alt-screen so we don't hit-test against stale rects when the
+    // user is in normal scrollback mode (where row coordinates are
+    // ambiguous because the buffer can scroll). Wheel events are routed
+    // through the keyboard pipeline by the parser, so they're filtered out
+    // here.
+    this.mouseStdinHandler = (data: Buffer) => {
+      if (!this.altScreenActive) return
+      const events = parseInput(String(data))
+      for (const event of events) {
+        if (event.kind !== 'mouse') continue
+        this.handleMouseEvent(event.mouse)
+      }
+    }
+    this.stdin.on('data', this.mouseStdinHandler)
+
     if (!this.debug) {
       this.stdout.write(bracketedPasteEnable())
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Mouse event routing
+  // -------------------------------------------------------------------------
+
+  private handleMouseEvent(mouse: ParsedMouse): void {
+    // Convert from terminal's 1-indexed coordinates to renderer's 0-indexed
+    // screen cells (the same space the rect cache stores).
+    const col = mouse.col - 1
+    const row = mouse.row - 1
+    const motion = isMotionEvent(mouse.button)
+    const baseButton = getBaseButton(mouse.button)
+
+    if (!motion && mouse.action === 'press' && baseButton === MOUSE_BUTTON_LEFT) {
+      // Fresh left-button press → fire click. Track the down state so we
+      // know to ignore the matching release.
+      this.leftButtonDown = true
+      dispatchClick(this.rootNode, col, row)
+      return
+    }
+
+    if (!motion && mouse.action === 'release' && baseButton === MOUSE_BUTTON_LEFT) {
+      this.leftButtonDown = false
+      return
+    }
+
+    if (motion) {
+      // Both hover (no-button motion) and drag (button-held motion) update
+      // the hover set. Drag-specific dispatch is left to a follow-up task.
+      dispatchHover(this.rootNode, col, row, this.hoveredNodes)
+      return
+    }
+
+    // Other clicks (middle, right) are not currently dispatched — left as a
+    // follow-up. We could route them through dispatchClick with a button
+    // discriminator, but the technical notes scope this task to onClick.
   }
 
   // -------------------------------------------------------------------------
@@ -126,6 +196,7 @@ export class Ink {
     this.throttledRender.cancel()
     this.reconciler.updateContainer(null, this.container, null, () => {})
     this.stdout.removeListener('resize', this.resizeHandler)
+    this.stdin.removeListener('data', this.mouseStdinHandler)
     process.removeListener('SIGTERM', this.signalHandler)
     process.removeListener('SIGINT', this.signalHandler)
 

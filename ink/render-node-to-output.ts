@@ -5,6 +5,7 @@ import { writeCell } from './screen.js'
 import type { StyleProps, BorderStyleName } from './styles.js'
 import { borderStyles } from './styles.js'
 import { Edge } from './layout/yoga.js'
+import { setNodeRect } from './mouse/node-cache.js'
 
 // ---------------------------------------------------------------------------
 // Clip region for overflow: hidden
@@ -182,6 +183,12 @@ export function renderNodeToOutput(
   const h = Math.floor(yoga.getComputedHeight())
 
   if (w <= 0 || h <= 0) return
+
+  // Cache absolute screen rect so the mouse hit-tester can locate this node.
+  // We record before recursing so children appear after their parent in the
+  // cache, and we use absolute (post-translation) coordinates because
+  // hit-test inputs arrive in absolute screen cells.
+  setNodeRect(element, { x, y, width: w, height: h })
 
   // Apply overflow clipping
   let childClip = clip

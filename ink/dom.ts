@@ -1,6 +1,7 @@
 import { YogaLayoutNode, Edge, FlexDirection, Gutter, Justify, Align, Wrap, Overflow, Display, PositionType } from './layout/yoga.js'
 import type { StyleProps, FlexDirectionProp, JustifyProp, AlignProp, WrapProp, OverflowProp, DisplayProp, PositionProp } from './styles.js'
 import { MeasureMode } from 'yoga-layout'
+import type { EventHandlers } from './mouse/types.js'
 
 // ---------------------------------------------------------------------------
 // Node types
@@ -19,6 +20,9 @@ export interface DOMElement {
   parentNode: DOMElement | null
   childNodes: Array<DOMElement | DOMTextNode>
   internal_static?: boolean
+  // Mouse event handlers, stored separately from style props so the
+  // dispatcher can look them up without walking the full attribute set.
+  _eventHandlers?: EventHandlers
 }
 
 export interface DOMTextNode {
