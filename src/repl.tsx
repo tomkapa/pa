@@ -4,6 +4,7 @@ import { TextInput } from './components/text-input.js'
 import { ModeIndicator } from './components/mode-indicator.js'
 import { PermissionRequest } from './components/permission-dialog.js'
 import { AssistantToolUseBlock, ToolUseProgressBlock, UserToolResultBlock } from './components/tool-messages.js'
+import { ThinkingBlock } from './components/thinking-block.js'
 import type { Message } from './types/message.js'
 import type { AgentEvent, QueryDeps } from './services/agent/types.js'
 import type { ProgressMessage } from './services/tools/types.js'
@@ -128,9 +129,22 @@ function MessageView({
 
   if (message.type === 'assistant') {
     const blocks = message.message.content
+    const stopReason = message.message.stop_reason
     return (
       <Box flexDirection="column">
         {blocks.map((block, i) => {
+          if (block.type === 'thinking') {
+            // The trailing thinking block streams until the assistant
+            // message itself finalizes (stop_reason set).
+            const isStreaming = i === blocks.length - 1 && stopReason === null
+            return (
+              <ThinkingBlock
+                key={i}
+                content={block.thinking}
+                isStreaming={isStreaming}
+              />
+            )
+          }
           if (block.type === 'text') {
             return block.text ? <Text key={i}>{block.text}</Text> : null
           }

@@ -1,10 +1,15 @@
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages/messages'
 import type { AssistantMessage, Message } from '../../types/message.js'
 import { toApiMessageParams } from '../messages/normalize.js'
-import { createSystemMessage } from '../messages/factory.js'
-import { getMessagesAfterCompactBoundary, isToolResultBlock } from '../messages/predicates.js'
+import { createSystemMessage, extractTextFromContent } from '../messages/factory.js'
+import {
+  getMessagesAfterCompactBoundary,
+  isHumanTurn,
+  isToolResultBlock,
+} from '../messages/predicates.js'
 import { getErrorMessage } from '../../utils/error.js'
 import { buildPostCompactMessages, createInitialAutoCompactTracking } from './auto-compact.js'
+import { detectEffortLevel, type EffortLevel } from './thinking.js'
 import {
   endInteractionSpan,
   endLLMRequestSpan,
@@ -48,6 +53,21 @@ function lastUserText(messages: readonly Message[]): string {
     }
   }
   return ''
+}
+
+/**
+ * Detect the extended-thinking effort keyword on the most recent human turn,
+ * skipping tool_results and other meta user messages. The keyword is set
+ * once by the human and stays in effect across every model call inside the
+ * same user turn — even after the loop has folded in tool_use round-trips.
+ */
+function effortFromLastHumanTurn(messages: readonly Message[]): EffortLevel {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]!
+    if (!isHumanTurn(m)) continue
+    return detectEffortLevel(extractTextFromContent(m.message.content))
+  }
+  return 'off'
 }
 
 export async function* queryLoop(
@@ -111,6 +131,7 @@ export async function* queryLoop(
       }
 
       const messageParams: CallModelParams['messages'] = toApiMessageParams(visibleMessages)
+      const effort = effortFromLastHumanTurn(visibleMessages)
 
       let assistantMessage: AssistantMessage | undefined
 
@@ -126,6 +147,7 @@ export async function* queryLoop(
         for await (const event of deps.callModel({
           messages: messageParams,
           systemPrompt,
+          effort,
           abortSignal,
         })) {
           yield event

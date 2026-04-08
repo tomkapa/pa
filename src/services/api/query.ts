@@ -54,18 +54,41 @@ function applyContentBlockDelta(acc: StreamAccumulator, event: Extract<RawMessag
   const delta = event.delta
   switch (delta.type) {
     case 'text_delta':
-      if (block.type === 'text') {
-        ;(block as { text: string }).text += delta.text
+      // Defensive: a text_delta on a non-text block is an upstream protocol
+      // bug. Throw fast so the issue surfaces in tests instead of silently
+      // appending into the wrong buffer.
+      if (block.type !== 'text') {
+        throw new Error(
+          `Protocol error: text_delta on a ${block.type} block at index ${event.index}`,
+        )
       }
+      ;(block as { text: string }).text += delta.text
       break
     case 'input_json_delta': {
+      // input_json_delta accumulates unconditionally — `finalizeToolInput`
+      // is the gate that decides whether the buffered JSON is parsed and
+      // assigned to a block (only when block.type === 'tool_use').
       const existing = acc.toolInputBuffers.get(event.index) ?? ''
       acc.toolInputBuffers.set(event.index, existing + delta.partial_json)
       break
     }
     case 'thinking_delta':
+      // Same defensive guard as text_delta. If a thinking_delta lands on a
+      // text or tool_use block, the SSE sequencing is wrong and silently
+      // appending the reasoning into the user-visible text would be a bug.
+      if (block.type !== 'thinking') {
+        throw new Error(
+          `Protocol error: thinking_delta on a ${block.type} block at index ${event.index}`,
+        )
+      }
+      ;(block as { thinking: string }).thinking += delta.thinking
+      break
+    case 'signature_delta':
       if (block.type === 'thinking') {
-        ;(block as { thinking: string }).thinking += delta.thinking
+        // Claude returns a `signature` for cross-turn integrity validation.
+        // MiniMax may not emit it; if it does, store it verbatim so the next
+        // turn's request reproduces the assistant message exactly.
+        ;(block as { signature?: string }).signature = delta.signature
       }
       break
   }

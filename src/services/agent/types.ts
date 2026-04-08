@@ -3,10 +3,12 @@ import type { Message, UserMessage, SystemMessage } from '../../types/message.js
 import type { QueryEvent, StreamEvent } from '../../types/streamEvents.js'
 import type { ProgressEvent, ToolBatchEvent, ToolUseBlock } from '../tools/execution/types.js'
 import type { AutoCompactTrackingState, CompactionResult } from './auto-compact.js'
+import type { EffortLevel } from './thinking.js'
 
 export type { AutoCompactTrackingState, CompactionResult }
 
 export type { Message, UserMessage, SystemMessage, QueryEvent, ContentBlockParam, ProgressEvent }
+export type { EffortLevel }
 
 export type TerminalReason =
   | 'completed'
@@ -31,6 +33,13 @@ export interface CallModelParams {
    * format. See `services/system-prompt/` for how this array is built.
    */
   systemPrompt: string[]
+  /**
+   * Extended-thinking effort for this turn. The query loop derives this from
+   * the most recent human user message via `detectEffortLevel`. The deps
+   * layer turns it into the request's `thinking` field (or omits it for
+   * `'off'`). See `services/agent/thinking.ts`.
+   */
+  effort?: EffortLevel
   abortSignal?: AbortSignal
 }
 

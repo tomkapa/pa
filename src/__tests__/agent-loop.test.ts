@@ -835,4 +835,116 @@ describe('agent loop', () => {
       expect(queryResult.terminal.turnCount).toBe(loopResult.terminal.turnCount)
     })
   })
+
+  // ── Extended thinking effort detection ────────────────────────────
+
+  describe('thinking effort detection', () => {
+    test('passes effort=off to callModel when no keyword is in the user message', async () => {
+      const callModelMock = mock<QueryDeps['callModel']>(async function* (_params) {
+        yield createAssistantMsg([textBlock('Done')])
+      })
+      const deps = createDeps({ callModel: callModelMock })
+
+      const userMsg = createUserMessage({ content: 'just answer please' })
+      await collectAll(query(baseParams({ deps, messages: [userMsg] })))
+
+      expect(callModelMock).toHaveBeenCalled()
+      const params = callModelMock.mock.calls[0]![0] as CallModelParams
+      expect(params.effort).toBe('off')
+    })
+
+    test('detects "think harder" keyword and sets effort=high', async () => {
+      const callModelMock = mock<QueryDeps['callModel']>(async function* (_params) {
+        yield createAssistantMsg([textBlock('Done')])
+      })
+      const deps = createDeps({ callModel: callModelMock })
+
+      const userMsg = createUserMessage({
+        content: 'think harder about the algorithm complexity',
+      })
+      await collectAll(query(baseParams({ deps, messages: [userMsg] })))
+
+      const params = callModelMock.mock.calls[0]![0] as CallModelParams
+      expect(params.effort).toBe('high')
+    })
+
+    test('detects "ultrathink" keyword and sets effort=max', async () => {
+      const callModelMock = mock<QueryDeps['callModel']>(async function* (_params) {
+        yield createAssistantMsg([textBlock('Done')])
+      })
+      const deps = createDeps({ callModel: callModelMock })
+
+      const userMsg = createUserMessage({
+        content: 'ultrathink the entire architecture before answering',
+      })
+      await collectAll(query(baseParams({ deps, messages: [userMsg] })))
+
+      const params = callModelMock.mock.calls[0]![0] as CallModelParams
+      expect(params.effort).toBe('max')
+    })
+
+    test('substring "rethink" does NOT trigger thinking', async () => {
+      const callModelMock = mock<QueryDeps['callModel']>(async function* (_params) {
+        yield createAssistantMsg([textBlock('Done')])
+      })
+      const deps = createDeps({ callModel: callModelMock })
+
+      const userMsg = createUserMessage({
+        content: "I'll rethink this later",
+      })
+      await collectAll(query(baseParams({ deps, messages: [userMsg] })))
+
+      const params = callModelMock.mock.calls[0]![0] as CallModelParams
+      expect(params.effort).toBe('off')
+    })
+
+    test('skips tool_result messages and reads the human turn for the keyword', async () => {
+      // Multi-iteration loop: user types "think hard", model calls a tool,
+      // tool returns, model is invoked AGAIN for the next iteration. The
+      // second invocation should still see effort=medium because the human's
+      // message is still the most recent NON-meta user message.
+      const callModelMock = mock<QueryDeps['callModel']>(async function* (_params) {
+        yield createAssistantMsg(
+          [toolUseBlock(`t-${Math.random()}`, 'tool', {})],
+          'tool_use',
+        )
+      })
+      // After two tool_use turns, complete with a text response.
+      let calls = 0
+      const callModelImpl: QueryDeps['callModel'] = async function* (params) {
+        calls++
+        callModelMock(params)
+        if (calls < 3) {
+          yield createAssistantMsg(
+            [toolUseBlock(`t-${calls}`, 'tool', {})],
+            'tool_use',
+          )
+        } else {
+          yield createAssistantMsg([textBlock('Done')])
+        }
+      }
+      let uuidCounter = 0
+      const uuidFn = () => `uuid-${++uuidCounter}`
+      const deps = createDeps({
+        callModel: callModelImpl,
+        executeToolBatch: makeBatchExecutor(
+          async () => ({ content: 'ok', isError: false }),
+          uuidFn,
+        ),
+        uuid: uuidFn,
+      })
+
+      const userMsg = createUserMessage({
+        content: 'think hard before doing anything',
+      })
+      await collectAll(query(baseParams({ deps, messages: [userMsg] })))
+
+      // All three model calls should have seen the same effort.
+      expect(callModelMock.mock.calls.length).toBe(3)
+      for (const call of callModelMock.mock.calls) {
+        const params = call[0] as CallModelParams
+        expect(params.effort).toBe('medium')
+      }
+    })
+  })
 })

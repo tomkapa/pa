@@ -28,6 +28,7 @@ import {
   evaluateAutoCompact,
 } from './auto-compact.js'
 import type { SummarizeFn } from './auto-compact.js'
+import { buildThinkingConfig } from './thinking.js'
 
 /**
  * Convert the agent's system prompt array (sections + boundary marker)
@@ -124,6 +125,12 @@ async function* callModelImpl(
 ): AsyncGenerator<QueryEvent> {
   const apiTools = await apiToolsPromise
 
+  // `buildThinkingConfig` enforces `budget_tokens < max_tokens` (API rejects
+  // otherwise) and returns `undefined` for `'off'` so the spread is a no-op.
+  const thinking = params.effort
+    ? buildThinkingConfig(params.effort, maxTokens)
+    : undefined
+
   yield* queryWithStreaming(client, {
     model,
     max_tokens: maxTokens,
@@ -131,6 +138,7 @@ async function* callModelImpl(
     system: systemPromptToBlocks(params.systemPrompt),
     abortSignal: params.abortSignal,
     ...(apiTools.length > 0 ? { tools: apiTools } : {}),
+    ...(thinking ? { thinking } : {}),
   })
 }
 
