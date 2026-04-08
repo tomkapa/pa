@@ -1,12 +1,24 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Box, Text, useInput } from '../ink.js'
+import { atMentionAtCursor } from '../services/mentions/tokenizer.js'
 
 interface TextInputProps {
   value: string
   onChange: (value: string) => void
   onSubmit?: (value: string) => void
   isActive?: boolean
+  /**
+   * When provided, typing `@` at a whitespace-anchored position activates a
+   * file-mention typeahead submode. The callback returns candidate files for
+   * the current partial token. Leaving `suggest` unset keeps the input a
+   * plain text field.
+   */
+  suggest?: (token: string) => Promise<readonly string[]>
 }
+
+type Suggestion =
+  | { kind: 'off' }
+  | { kind: 'picking'; token: string; items: readonly string[]; selectedIndex: number }
 
 function cursorToLineCol(lines: string[], cursor: number): { lineIndex: number; col: number } {
   let rem = cursor
@@ -25,8 +37,13 @@ function lineColToCursor(lines: string[], lineIndex: number, col: number): numbe
   return offset + col
 }
 
-export function TextInput({ value, onChange, onSubmit, isActive = true }: TextInputProps) {
+export function TextInput({ value, onChange, onSubmit, isActive = true, suggest }: TextInputProps) {
   const [cursor, setCursor] = useState(value.length)
+  const [suggestion, setSuggestion] = useState<Suggestion>({ kind: 'off' })
+
+  // Latest-write-wins guard: an older fetch response must not overwrite a
+  // newer one if the user kept typing.
+  const fetchGenerationRef = useRef(0)
 
   useEffect(() => {
     if (cursor > value.length) {
@@ -34,7 +51,66 @@ export function TextInput({ value, onChange, onSubmit, isActive = true }: TextIn
     }
   }, [value, cursor])
 
+  useEffect(() => {
+    if (!suggest) return
+    const token = atMentionAtCursor(value, cursor)
+    if (token === null) {
+      setSuggestion(prev => (prev.kind === 'off' ? prev : { kind: 'off' }))
+      return
+    }
+    const generation = ++fetchGenerationRef.current
+    void suggest(token).then(items => {
+      if (generation !== fetchGenerationRef.current) return
+      // Empty results dismiss the picker so Enter still submits.
+      if (items.length === 0) {
+        setSuggestion(prev => (prev.kind === 'off' ? prev : { kind: 'off' }))
+        return
+      }
+      setSuggestion({ kind: 'picking', token, items, selectedIndex: 0 })
+    })
+  }, [value, cursor, suggest])
+
+  const completeMention = useCallback(
+    (picked: string) => {
+      const before = value.slice(0, cursor)
+      const atIdx = before.lastIndexOf('@')
+      if (atIdx === -1) return
+      const insertion = `${picked} `
+      const newText = value.slice(0, atIdx + 1) + insertion + value.slice(cursor)
+      onChange(newText)
+      setCursor(atIdx + 1 + insertion.length)
+      setSuggestion({ kind: 'off' })
+      // Invalidate any in-flight fetch so the picker doesn't flicker back on.
+      fetchGenerationRef.current++
+    },
+    [value, cursor, onChange],
+  )
+
+  const movePickerSelection = useCallback((delta: number) => {
+    setSuggestion(prev => {
+      if (prev.kind !== 'picking') return prev
+      const n = prev.items.length
+      const next = (prev.selectedIndex + delta + n) % n
+      return { ...prev, selectedIndex: next }
+    })
+  }, [])
+
   useInput((ch, key) => {
+    if (suggestion.kind === 'picking') {
+      if (key.upArrow) { movePickerSelection(-1); return }
+      if (key.downArrow) { movePickerSelection(1); return }
+      if (key.return || key.tab) {
+        const picked = suggestion.items[suggestion.selectedIndex]
+        if (picked !== undefined) completeMention(picked)
+        // Swallow Enter regardless so an open picker never submits the prompt.
+        return
+      }
+      if (key.escape) {
+        setSuggestion({ kind: 'off' })
+        return
+      }
+    }
+
     // Shift+Enter or backslash immediately before Enter → insert newline
     if (key.return) {
       const trailingBackslash = cursor > 0 && value[cursor - 1] === '\\'
@@ -124,6 +200,20 @@ export function TextInput({ value, onChange, onSubmit, isActive = true }: TextIn
           )}
         </Box>
       ))}
+      {suggestion.kind === 'picking' && suggestion.items.length > 0 && (
+        <Box flexDirection="column">
+          {suggestion.items.map((item, i) => (
+            <Text
+              key={item}
+              color={i === suggestion.selectedIndex ? 'cyan' : undefined}
+              inverse={i === suggestion.selectedIndex}
+            >
+              {i === suggestion.selectedIndex ? '> ' : '  '}
+              {item}
+            </Text>
+          ))}
+        </Box>
+      )}
     </Box>
   )
 }

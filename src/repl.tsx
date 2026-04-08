@@ -7,7 +7,10 @@ import { AssistantToolUseBlock, ToolUseProgressBlock, UserToolResultBlock } from
 import type { Message } from './types/message.js'
 import type { AgentEvent, QueryDeps } from './services/agent/types.js'
 import type { ProgressMessage } from './services/tools/types.js'
-import { createUserMessage, createSystemMessage } from './services/messages/factory.js'
+import { createSystemMessage } from './services/messages/factory.js'
+import { buildMessagesForUserTurn } from './services/mentions/message-builder.js'
+import { scanFiles } from './services/mentions/scanner.js'
+import { filterForToken } from './services/mentions/filter.js'
 import {
   getMessagesAfterCompactBoundary,
   isToolResultBlock,
@@ -49,6 +52,11 @@ const MODEL = 'claude-sonnet-4-20250514'
 const MAX_TOKENS = 8096
 const CURSOR_IBEAM = cursorIBeam()
 const CURSOR_DEFAULT = cursorDefault()
+
+// For huge repos, graduate to the cached-index follow-up tech-debt task
+// instead of raising this cap.
+const MENTION_SCAN_MAX_FILES = 1000
+const MENTION_PICKER_LIMIT = 15
 
 // ---------------------------------------------------------------------------
 // System prompt assembly
@@ -427,9 +435,14 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
       return
     }
 
-    const userMessage = createUserMessage({ content: value })
-    persistMessage(userMessage)
-    const updatedMessages = [...messagesRef.current, userMessage]
+    // Expands @-file mentions into a synthesized Read tool trace before the
+    // user's literal text. Prompts without mentions return a single message.
+    const turnMessages = await buildMessagesForUserTurn({
+      promptText: value,
+      cwd: process.cwd(),
+    })
+    for (const msg of turnMessages) persistMessage(msg)
+    const updatedMessages = [...messagesRef.current, ...turnMessages]
     setMessages(updatedMessages)
     setLatestProgressByToolUseId(new Map())
     setInput('')
@@ -484,6 +497,12 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
     }
   })
 
+  // Per-keystroke rescan of the workspace — no caching in v1 (see constants above).
+  const suggestMentions = useCallback(async (token: string) => {
+    const files = await scanFiles(process.cwd(), MENTION_SCAN_MAX_FILES)
+    return filterForToken(files, token, MENTION_PICKER_LIMIT)
+  }, [])
+
   useEffect(() => {
     return () => { process.stdout.write(CURSOR_DEFAULT) }
   }, [])
@@ -525,6 +544,7 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
           onChange={setInput}
           onSubmit={handleSubmit}
           isActive={!activeConfirm}
+          suggest={suggestMentions}
         />
       </Box>
     </Box>

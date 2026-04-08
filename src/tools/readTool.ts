@@ -43,11 +43,14 @@ export class ReadToolError extends Error {
   }
 }
 
+/** Registered name of the Read tool. Single source of truth for the name. */
+export const READ_TOOL_NAME = 'Read'
+
 export function readToolDef(
   fileStateCache: FileStateCache,
 ): ToolDef<ReadToolInput, ReadToolOutput> {
   return {
-    name: 'Read',
+    name: READ_TOOL_NAME,
     maxResultSizeChars: 100_000,
 
     get inputSchema(): ZodType<ReadToolInput> {
