@@ -8,13 +8,17 @@ import { createScreenBuffer } from './screen.js'
 import { renderToBuffer } from './output.js'
 import { computeOutputHeight } from './render-node-to-output.js'
 import { diffBuffers, serializePatches, serializeFullFrame } from './log-update.js'
-import { cursorTo, cursorHide, cursorShow, resetStyle, eraseDown, bracketedPasteEnable, bracketedPasteDisable } from './termio/csi.js'
+import { cursorTo, cursorHide, cursorShow, resetStyle, eraseDown, bracketedPasteEnable, bracketedPasteDisable, kittyKeyboardPush, kittyKeyboardPop } from './termio/csi.js'
 import { decreset, disableMouseTracking } from './termio/dec.js'
 import { throttle } from './throttle.js'
 import { FRAME_INTERVAL_MS } from './constants.js'
 import { parseInput } from './hooks/useInput.js'
 import { dispatchClick, dispatchHover } from './mouse/dispatch.js'
 import { isMotionEvent, getBaseButton, MOUSE_BUTTON_LEFT, type ParsedMouse } from './mouse/types.js'
+
+const logReconcilerError = (label: string) => (error: Error): void => {
+  process.stderr.write(`Ink ${label} error: ${error.stack ?? error.message}\n`)
+}
 
 export interface InkOptions {
   stdout: NodeJS.WriteStream
@@ -88,9 +92,9 @@ export class Ink {
       false,
       null,
       '',
-      (error: Error) => { console.error('Ink uncaught error:', error) },
-      (error: Error) => { console.error('Ink caught error:', error) },
-      (error: Error) => { console.error('Ink recoverable error:', error) },
+      logReconcilerError('uncaught'),
+      logReconcilerError('caught'),
+      logReconcilerError('recoverable'),
       () => {},
     )
 
@@ -136,7 +140,7 @@ export class Ink {
     this.stdin.on('data', this.mouseStdinHandler)
 
     if (!this.debug) {
-      this.stdout.write(bracketedPasteEnable())
+      this.stdout.write(bracketedPasteEnable() + kittyKeyboardPush())
     }
   }
 
@@ -201,7 +205,7 @@ export class Ink {
     process.removeListener('SIGINT', this.signalHandler)
 
     if (!this.debug) {
-      this.stdout.write(bracketedPasteDisable() + cursorShow() + resetStyle())
+      this.stdout.write(kittyKeyboardPop() + bracketedPasteDisable() + cursorShow() + resetStyle())
     }
 
     this.resolveExit()

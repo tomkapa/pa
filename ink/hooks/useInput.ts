@@ -83,6 +83,9 @@ const BRACKETED_PASTE_END = '\x1b[201~'
 // is anchored implicitly via `data.slice(i).match(...)` returning at index 0.
 const SGR_MOUSE_RE = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])/
 
+// Match a Kitty CSI u key sequence body: `<codepoint>;<modifiers>u` or `<codepoint>u`
+const CSI_U_RE = /^(\d+)(?:;(\d+))?u/
+
 function parseSgrMouseAt(data: string, i: number): { event: ParsedEvent; consumed: number } | null {
   // Quick prefix check before running the regex.
   if (data.charCodeAt(i) !== 0x1b) return null
@@ -173,7 +176,27 @@ export function parseInput(data: string): ParsedEvent[] {
         else if (seq.startsWith('1;2B')) { key.shift = true; key.downArrow = true; i += 6 }
         else if (seq.startsWith('1;2C')) { key.shift = true; key.rightArrow = true; i += 6 }
         else if (seq.startsWith('1;2D')) { key.shift = true; key.leftArrow = true; i += 6 }
-        else { key.escape = true; i += 2 }
+        else {
+          // Generic CSI u (Kitty keyboard protocol): `<codepoint>;<modifiers>u`.
+          // Modifiers field is bitmask + 1: shift=1, alt=2, ctrl=4.
+          const csiu = CSI_U_RE.exec(seq)
+          if (csiu) {
+            const codepoint = Number(csiu[1])
+            const mods = Math.max(0, Number(csiu[2] ?? 1) - 1)
+            key.shift = (mods & 1) !== 0
+            key.meta  = (mods & 2) !== 0
+            key.ctrl  = (mods & 4) !== 0
+            if      (codepoint === 13)  key.return    = true
+            else if (codepoint === 27)  key.escape    = true
+            else if (codepoint === 9)   key.tab       = true
+            else if (codepoint === 127) key.backspace = true
+            const inputChar = (codepoint >= 32 && codepoint < 127) ? String.fromCodePoint(codepoint) : ''
+            i += 2 + csiu[0].length
+            results.push({ kind: 'key', input: inputChar, key })
+            continue
+          }
+          key.escape = true; i += 2
+        }
         results.push({ kind: 'key', input: '', key })
       } else if (i + 1 < data.length) {
         key.meta = true

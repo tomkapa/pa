@@ -87,7 +87,7 @@ function pickExporter(): SpanExporter {
   const isTest = process.env['NODE_ENV'] === 'test'
   const choice: ExporterChoice = (() => {
     if (raw === 'file' || raw === 'memory' || raw === 'none' || raw === 'console') return raw
-    return isTest ? 'memory' : 'console'
+    return isTest ? 'memory' : 'file'
   })()
 
   switch (choice) {

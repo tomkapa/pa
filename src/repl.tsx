@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useMemo } from 'react'
+import { useState, useCallback, useRef, useMemo, useEffect } from 'react'
 import { Box, Text, useInput, useApp } from './ink.js'
 import { TextInput } from './components/text-input.js'
 import { ModeIndicator } from './components/mode-indicator.js'
@@ -32,9 +32,12 @@ import {
   getSystemContext,
   getUserContext,
 } from './services/system-prompt/index.js'
+import { cursorDefault, cursorIBeam } from '../ink/termio/csi.js'
 
 const MODEL = 'claude-sonnet-4-20250514'
 const MAX_TOKENS = 8096
+const CURSOR_IBEAM = cursorIBeam()
+const CURSOR_DEFAULT = cursorDefault()
 
 // ---------------------------------------------------------------------------
 // System prompt assembly
@@ -393,6 +396,10 @@ export function REPL({ deps: injectedDeps }: REPLProps) {
     }
   })
 
+  useEffect(() => {
+    return () => { process.stdout.write(CURSOR_DEFAULT) }
+  }, [])
+
   return (
     <Box flexDirection="column">
       {messages.map(msg => (
@@ -413,7 +420,10 @@ export function REPL({ deps: injectedDeps }: REPLProps) {
         />
       )}
       <ModeIndicator mode={permissionContext.mode} />
-      <Box>
+      <Box
+        onMouseEnter={() => process.stdout.write(CURSOR_IBEAM)}
+        onMouseLeave={() => process.stdout.write(CURSOR_DEFAULT)}
+      >
         <Text color="cyan">{'❯ '}</Text>
         <TextInput
           value={input}

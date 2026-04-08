@@ -2,6 +2,12 @@ import { useCallback, useLayoutEffect, type ReactNode } from 'react'
 import { AppContext, StdinContext, StdoutContext, InkContext, type AppContextValue, type StdinContextValue, type StdoutContextValue } from './contexts.js'
 import type { Ink } from '../ink.js'
 
+// Ctrl+C arrives as raw \x03 in classic mode, or as \x1b[99;5u under the
+// Kitty keyboard protocol. Cheap byte/substring scans avoid running parseInput
+// on every chunk just to detect this single keystroke.
+const CTRL_C_BYTE = 0x03
+const CTRL_C_KITTY = '\x1b[99;5u'
+
 interface AppProps {
   children: ReactNode
   ink: Ink
@@ -29,7 +35,8 @@ export function App({ children, ink, exitOnCtrlC, onExit }: AppProps) {
     }
 
     const handleData = (data: Buffer) => {
-      if (exitOnCtrlC && String(data) === '\x03') {
+      if (!exitOnCtrlC) return
+      if (data.includes(CTRL_C_BYTE) || String(data).includes(CTRL_C_KITTY)) {
         exit()
       }
     }
