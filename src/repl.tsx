@@ -43,6 +43,7 @@ import {
   getUserContext,
 } from './services/system-prompt/index.js'
 import { cursorDefault, cursorIBeam } from '../ink/termio/csi.js'
+import type { SessionWriter } from './services/session/index.js'
 
 const MODEL = 'claude-sonnet-4-20250514'
 const MAX_TOKENS = 8096
@@ -261,14 +262,24 @@ function createDefaultREPLDeps(): REPLDeps {
 // REPL component
 // ---------------------------------------------------------------------------
 
-export interface REPLProps {
-  deps?: REPLDeps
+export interface REPLSessionBinding {
+  /** Writer to persist messages. The REPL takes ownership of close(). */
+  writer: SessionWriter
+  /** Messages loaded from disk when resuming — seed the initial state. */
+  initialMessages?: Message[]
 }
 
-export function REPL({ deps: injectedDeps }: REPLProps) {
+export interface REPLProps {
+  deps?: REPLDeps
+  session?: REPLSessionBinding
+}
+
+export function REPL({ deps: injectedDeps, session }: REPLProps) {
   const { exit } = useApp()
   const [input, setInput] = useState('')
-  const [messages, setMessages] = useState<Message[]>([])
+  const [messages, setMessages] = useState<Message[]>(
+    () => session?.initialMessages ?? [],
+  )
   const [isLoading, setIsLoading] = useState(false)
   const [latestProgressByToolUseId, setLatestProgressByToolUseId] = useState<Map<string, ProgressMessage>>(
     () => new Map(),
@@ -281,6 +292,30 @@ export function REPL({ deps: injectedDeps }: REPLProps) {
   const replDeps = useMemo(
     () => injectedDeps ?? createDefaultREPLDeps(),
     [injectedDeps],
+  )
+
+  // Messages already persisted to disk are seeded into the set so we don't
+  // re-write history we just read back. Also guards against
+  // setMessages-style replacement events carrying an already-persisted uuid.
+  const persistedUuidsRef = useRef<Set<string>>(
+    new Set((session?.initialMessages ?? []).map(m => m.uuid)),
+  )
+  const writer = session?.writer
+
+  const persistMessage = useCallback((msg: Message) => {
+    if (!writer) return
+    if (persistedUuidsRef.current.has(msg.uuid)) return
+    persistedUuidsRef.current.add(msg.uuid)
+    writer.append(msg)
+  }, [writer])
+
+  const addSystemMessage = useCallback(
+    (subtype: string, content: string, level: 'info' | 'warning' | 'error') => {
+      const msg = createSystemMessage({ subtype, content, level })
+      persistMessage(msg)
+      setMessages(prev => [...prev, msg])
+    },
+    [persistMessage],
   )
 
   // ---------------------------------------------------------------------------
@@ -311,6 +346,7 @@ export function REPL({ deps: injectedDeps }: REPLProps) {
 
   const onQueryEvent = useCallback((event: AgentEvent) => {
     if (event.type === 'assistant') {
+      persistMessage(event)
       setMessages(prev => {
         const idx = prev.findIndex(m => m.uuid === event.uuid)
         if (idx >= 0) {
@@ -337,6 +373,7 @@ export function REPL({ deps: injectedDeps }: REPLProps) {
           })
         }
       }
+      persistMessage(event)
       setMessages(prev => [...prev, event])
     } else if (event.type === 'progress') {
       setLatestProgressByToolUseId(prev => {
@@ -346,7 +383,7 @@ export function REPL({ deps: injectedDeps }: REPLProps) {
       })
     }
     // stream_event: ignored for now (streaming display is a future enhancement)
-  }, [])
+  }, [persistMessage])
 
   const handleSubmit = useCallback(async (value: string) => {
     if (!value.trim() || isLoadingRef.current) return
@@ -366,14 +403,7 @@ export function REPL({ deps: injectedDeps }: REPLProps) {
         }
         const visible = getMessagesAfterCompactBoundary(messagesRef.current)
         if (visible.length === 0) {
-          setMessages(prev => [
-            ...prev,
-            createSystemMessage({
-              subtype: 'compact_skipped',
-              content: 'Nothing to compact yet.',
-              level: 'info',
-            }),
-          ])
+          addSystemMessage('compact_skipped', 'Nothing to compact yet.', 'info')
           return
         }
         const result = await compactConversation({
@@ -385,16 +415,10 @@ export function REPL({ deps: injectedDeps }: REPLProps) {
           preCompactTokenCount: getTokenCountFromLastResponse(visible),
         })
         const postCompact = buildPostCompactMessages(result)
+        for (const m of postCompact) persistMessage(m)
         setMessages(prev => [...prev, ...postCompact])
       } catch (error: unknown) {
-        setMessages(prev => [
-          ...prev,
-          createSystemMessage({
-            subtype: 'compact_error',
-            content: `/compact failed: ${getErrorMessage(error)}`,
-            level: 'error',
-          }),
-        ])
+        addSystemMessage('compact_error', `/compact failed: ${getErrorMessage(error)}`, 'error')
       } finally {
         isLoadingRef.current = false
         setIsLoading(false)
@@ -404,6 +428,7 @@ export function REPL({ deps: injectedDeps }: REPLProps) {
     }
 
     const userMessage = createUserMessage({ content: value })
+    persistMessage(userMessage)
     const updatedMessages = [...messagesRef.current, userMessage]
     setMessages(updatedMessages)
     setLatestProgressByToolUseId(new Map())
@@ -435,14 +460,7 @@ export function REPL({ deps: injectedDeps }: REPLProps) {
         onQueryEvent(event)
       }
     } catch (error: unknown) {
-      setMessages(prev => [
-        ...prev,
-        createSystemMessage({
-          subtype: 'repl_error',
-          content: getErrorMessage(error),
-          level: 'error',
-        }),
-      ])
+      addSystemMessage('repl_error', getErrorMessage(error), 'error')
     } finally {
       isLoadingRef.current = false
       setIsLoading(false)
@@ -452,7 +470,7 @@ export function REPL({ deps: injectedDeps }: REPLProps) {
       // UI sticks around until the next submit.
       setLatestProgressByToolUseId(prev => (prev.size === 0 ? prev : new Map()))
     }
-  }, [replDeps, onQueryEvent, pushConfirm])
+  }, [replDeps, onQueryEvent, pushConfirm, persistMessage, addSystemMessage])
 
   useInput((_ch, key) => {
     if (key.escape && abortControllerRef.current) {
@@ -469,6 +487,13 @@ export function REPL({ deps: injectedDeps }: REPLProps) {
   useEffect(() => {
     return () => { process.stdout.write(CURSOR_DEFAULT) }
   }, [])
+
+  // Fire-and-forget close on unmount; React's cleanup hook is sync, and
+  // cli.tsx awaits the same writer on the process-exit path.
+  useEffect(() => {
+    if (!writer) return
+    return () => { void writer.close() }
+  }, [writer])
 
   return (
     <Box flexDirection="column">
