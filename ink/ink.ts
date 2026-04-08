@@ -7,8 +7,8 @@ import type { ScreenBuffer } from './screen.js'
 import { createScreenBuffer } from './screen.js'
 import { renderToBuffer } from './output.js'
 import { computeOutputHeight } from './render-node-to-output.js'
-import { diffBuffers, serializePatches, serializeFullFrame } from './log-update.js'
-import { cursorTo, cursorHide, cursorShow, resetStyle, eraseDown, bracketedPasteEnable, bracketedPasteDisable, kittyKeyboardPush, kittyKeyboardPop } from './termio/csi.js'
+import { diffBuffers, serializePatches, serializeFullFrame, serializeFrameRelative } from './log-update.js'
+import { cursorTo, cursorUp, cursorHide, cursorShow, resetStyle, eraseDown, bracketedPasteEnable, bracketedPasteDisable, kittyKeyboardPush, kittyKeyboardPop } from './termio/csi.js'
 import { decreset, disableMouseTracking } from './termio/dec.js'
 import { throttle } from './throttle.js'
 import { FRAME_INTERVAL_MS } from './constants.js'
@@ -44,6 +44,13 @@ export class Ink {
   private isFirstRender = true
   private needsFullRepaint = true
   private isUnmounted = false
+  // Number of terminal rows currently occupied by the live region in
+  // non-alt-screen mode. Tracked so the next frame can move the cursor up to
+  // the top of the previous live region before redrawing. Capped at viewport
+  // rows when used so we never try to walk above the visible viewport (any
+  // rows beyond that have already scrolled into terminal scrollback and are
+  // immutable).
+  private liveRegionRows = 0
 
   private readonly exitPromise: Promise<void>
   private resolveExit!: () => void
@@ -108,6 +115,11 @@ export class Ink {
       this.frontBuffer = createScreenBuffer(cols, rows)
       this.backBuffer = createScreenBuffer(cols, rows)
       this.needsFullRepaint = true
+      // Terminal reflowed: the previous live region's row count no longer
+      // matches what's on screen, so we can't safely walk the cursor back to
+      // it. Drop the tracker — the next frame in normal mode will simply
+      // append below the wrapped old content.
+      this.liveRegionRows = 0
       queueMicrotask(() => this.throttledRender())
     }
     this.stdout.on('resize', this.resizeHandler)
@@ -248,36 +260,54 @@ export class Ink {
     const cols = this.stdout.columns ?? 80
     const viewportRows = this.stdout.rows ?? 24
     const outputHeight = computeOutputHeight(this.rootNode)
-    // In alt-screen mode, always use the full viewport height to avoid leaving
-    // stale cells and to prevent spurious scroll when content fills the screen.
-    const height = this.altScreenActive
-      ? viewportRows
-      : Math.min(outputHeight, viewportRows)
 
+    if (this.altScreenActive) {
+      // Alt-screen has no scrollback — cap the buffer at the viewport and
+      // use absolute positioning + diffing for efficient incremental updates.
+      const height = viewportRows
+      if (this.backBuffer.width !== cols || this.backBuffer.height !== height) {
+        this.backBuffer = createScreenBuffer(cols, height)
+      }
+      if (this.frontBuffer.width !== cols || this.frontBuffer.height !== height) {
+        this.frontBuffer = createScreenBuffer(cols, height)
+        this.needsFullRepaint = true
+      }
+
+      renderToBuffer(this.rootNode, this.backBuffer)
+
+      if (this.debug) {
+        this.writeDebugOutput()
+      } else if (this.needsFullRepaint) {
+        this.writeFullFrame()
+        this.needsFullRepaint = false
+      } else {
+        this.writeDiffFrame()
+      }
+
+      // Swap buffers. The new back buffer (formerly front) will be cleared by
+      // the next renderToBuffer call, so no clear is needed here.
+      const tmp = this.frontBuffer
+      this.frontBuffer = this.backBuffer
+      this.backBuffer = tmp
+      return
+    }
+
+    // Normal screen mode — render the FULL content height (no viewport cap)
+    // and emit it via relative cursor positioning so any rows that don't fit
+    // in the viewport scroll naturally into the terminal's scrollback. This
+    // is what makes overflowed content scrollable.
+    const height = Math.max(1, outputHeight)
     if (this.backBuffer.width !== cols || this.backBuffer.height !== height) {
       this.backBuffer = createScreenBuffer(cols, height)
-    }
-    if (this.frontBuffer.width !== cols || this.frontBuffer.height !== height) {
-      this.frontBuffer = createScreenBuffer(cols, height)
-      this.needsFullRepaint = true
     }
 
     renderToBuffer(this.rootNode, this.backBuffer)
 
     if (this.debug) {
       this.writeDebugOutput()
-    } else if (this.needsFullRepaint) {
-      this.writeFullFrame()
-      this.needsFullRepaint = false
     } else {
-      this.writeDiffFrame()
+      this.writeRelativeFrame(viewportRows)
     }
-
-    // Swap buffers. The new back buffer (formerly front) will be cleared by
-    // the next renderToBuffer call, so no clear is needed here.
-    const tmp = this.frontBuffer
-    this.frontBuffer = this.backBuffer
-    this.backBuffer = tmp
   }
 
   private writeDebugOutput(): void {
@@ -307,5 +337,38 @@ export class Ink {
     if (patches.length === 0) return
     const output = serializePatches(patches)
     this.stdout.write(output)
+  }
+
+  // Normal-screen frame writer: relative cursor positioning. Walks the cursor
+  // back to the start of the previous live region (capped at viewport-1, since
+  // anything older has scrolled into immutable scrollback), erases that region
+  // with eraseDown, and emits the new buffer joined by `\r\n`. When the buffer
+  // is taller than the viewport, the trailing newlines naturally push the top
+  // rows into terminal scrollback so the user can scroll back to see them.
+  private writeRelativeFrame(viewportRows: number): void {
+    const buffer = this.backBuffer
+    const body = serializeFrameRelative(buffer)
+
+    let prefix = ''
+    if (this.isFirstRender) {
+      prefix += cursorHide()
+    }
+
+    if (this.liveRegionRows > 0) {
+      // Cursor is currently parked at the end of the previous frame's last
+      // row. `\r` returns to col 0, then walk up to the first live row.
+      prefix += '\r'
+      const moveUp = Math.min(this.liveRegionRows - 1, viewportRows - 1)
+      if (moveUp > 0) prefix += cursorUp(moveUp)
+      prefix += eraseDown()
+    } else {
+      // No prior live region — make sure we start at col 0. We deliberately
+      // do NOT eraseDown here so we don't wipe whatever the user's shell had
+      // on screen above the cursor.
+      prefix += '\r'
+    }
+
+    this.stdout.write(prefix + body)
+    this.liveRegionRows = Math.min(buffer.height, viewportRows)
   }
 }

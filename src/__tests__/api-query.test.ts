@@ -413,11 +413,13 @@ describe('queryWithoutStreaming', () => {
     }
   })
 
-  test('throws if no assistant message is produced', async () => {
-    // Empty stream — no events
+  test('throws a descriptive error when the stream is empty', async () => {
+    // Empty stream — no events. The streaming layer should surface the
+    // empty-stream condition explicitly so callers don't see a misleading
+    // "no assistant message" error downstream.
     const client = createMockClient([])
     await expect(queryWithoutStreaming(client, defaultParams)).rejects.toThrow(
-      'No assistant message received',
+      /Empty stream from Anthropic API/,
     )
   })
 })

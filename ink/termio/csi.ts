@@ -4,6 +4,10 @@ export const CSI = `${ESC}[`
 export const cursorTo = (col: number, row: number): string =>
   `${CSI}${row + 1};${col + 1}H`
 
+// Move cursor up `n` rows. Column is unchanged. Returns '' for n <= 0 so
+// callers don't need to guard.
+export const cursorUp = (n: number): string => (n > 0 ? `${CSI}${n}A` : '')
+
 export const cursorHide = (): string => `${CSI}?25l`
 export const cursorShow = (): string => `${CSI}?25h`
 

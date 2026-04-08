@@ -101,3 +101,26 @@ export function serializeFullFrame(buffer: ScreenBuffer): string {
 
   return output
 }
+
+// ---------------------------------------------------------------------------
+// Relative-positioned frame render — used in normal screen mode
+//
+// Emits each row of the buffer joined by `\r\n` (no absolute cursorTo). The
+// caller positions the cursor at the start of the live region BEFORE writing
+// this body; rows past the visible viewport then scroll into the terminal's
+// native scrollback, which is what makes overflow content scrollable.
+// `\r\n` (rather than just `\n`) avoids any phantom-column auto-wrap pitfalls
+// after writing a full-width row.
+// ---------------------------------------------------------------------------
+
+export function serializeFrameRelative(buffer: ScreenBuffer): string {
+  const rows: string[] = []
+  for (let row = 0; row < buffer.height; row++) {
+    let line = ''
+    for (let col = 0; col < buffer.width; col++) {
+      line += styledChar(buffer.cells[row]![col]!)
+    }
+    rows.push(line)
+  }
+  return rows.join('\r\n')
+}

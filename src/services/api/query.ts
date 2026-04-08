@@ -165,7 +165,20 @@ export async function* queryWithStreaming(
     throw error
   }
 
-  if (!acc.messageId) return
+  if (!acc.messageId) {
+    // The stream closed cleanly without ever sending `message_start`. The
+    // SDK's Stream parser exits silently in this case, so we have to surface
+    // the failure ourselves — otherwise the caller sees an empty generator
+    // and reports the misleading "No assistant message received from model".
+    // Common upstream causes: a proxy that closes the body before SSE starts,
+    // a 200-with-empty-body from a non-Anthropic gateway, or an early abort
+    // that didn't propagate through the SDK as APIUserAbortError.
+    throw new Error(
+      `Empty stream from Anthropic API (no message_start received)${
+        requestId ? ` [request ${requestId}]` : ''
+      }`,
+    )
+  }
 
   const assistantMessage: AssistantMessage = {
     type: 'assistant',
