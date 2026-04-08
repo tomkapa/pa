@@ -67,4 +67,21 @@ export interface SystemMessage extends MessageBase {
   subtype: string
   content: string
   level: 'info' | 'warning' | 'error'
+  /**
+   * Present only on `compact_boundary` system messages. Acts as a fence in
+   * the message history: messages before the boundary are preserved for UI
+   * scrollback but never sent to the API on subsequent turns.
+   */
+  compactMetadata?: CompactMetadata
+}
+
+/** Subtype string identifying a compact boundary marker SystemMessage. */
+export const COMPACT_BOUNDARY_SUBTYPE = 'compact_boundary'
+
+export type CompactTrigger = 'auto' | 'manual'
+
+export interface CompactMetadata {
+  trigger: CompactTrigger
+  preCompactTokenCount: number
+  previousLastMessageUuid?: string
 }

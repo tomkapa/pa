@@ -4,7 +4,14 @@ import type {
   Tool as AnthropicTool,
 } from '@anthropic-ai/sdk/resources/messages/messages'
 import type { AssistantMessage } from '../../types/message.js'
-import type { QueryDeps, CallModelParams, ToolUseInfo } from './types.js'
+import type {
+  AutoCompactFn,
+  AutoCompactOutcome,
+  AutoCompactParams,
+  CallModelParams,
+  QueryDeps,
+  ToolUseInfo,
+} from './types.js'
 import type { ToolBatchEvent, CanUseToolFn } from '../tools/execution/types.js'
 import type { Tool, ToolUseContext } from '../tools/types.js'
 import type { QueryEvent } from '../../types/streamEvents.js'
@@ -15,6 +22,12 @@ import { toApiTools } from '../tools/to-api-tools.js'
 import { hasPermissionsToUseTool } from '../permissions/pipeline.js'
 import { createCanUseToolWithConfirm, type ToolUseConfirm } from '../permissions/confirm.js'
 import { DYNAMIC_BOUNDARY } from '../system-prompt/types.js'
+import {
+  compactConversation,
+  createAnthropicSummarizer,
+  evaluateAutoCompact,
+} from './auto-compact.js'
+import type { SummarizeFn } from './auto-compact.js'
 
 /**
  * Convert the agent's system prompt array (sections + boundary marker)
@@ -55,6 +68,9 @@ export function createQueryDeps(options: CreateQueryDepsOptions): QueryDeps {
     ? createCanUseToolWithConfirm(permissionContext, pushConfirm)
     : createCanUseTool(permissionContext)
 
+  const summarize = createAnthropicSummarizer(client, model, maxTokens)
+  const autoCompact = createAutoCompactImpl(model, summarize)
+
   return {
     callModel(params: CallModelParams): AsyncGenerator<QueryEvent> {
       apiToolsPromise ??= toApiTools(tools)
@@ -64,6 +80,38 @@ export function createQueryDeps(options: CreateQueryDepsOptions): QueryDeps {
       return executeToolBatchImpl(params, tools, abortController, canUseTool)
     },
     uuid: () => crypto.randomUUID(),
+    autoCompact,
+  }
+}
+
+/**
+ * Wraps `compactConversation` in the `AutoCompactFn` shape the query loop
+ * expects: decides whether to compact, then runs it. The token count from
+ * the threshold check is threaded into the compaction call so the loop
+ * doesn't walk the message array twice on compact turns.
+ */
+function createAutoCompactImpl(
+  model: string,
+  summarize: SummarizeFn,
+): AutoCompactFn {
+  return async (params: AutoCompactParams): Promise<AutoCompactOutcome> => {
+    const decision = evaluateAutoCompact({ messages: params.messages, model })
+    if (!decision.shouldCompact) {
+      return { compactionResult: null, tracking: params.tracking }
+    }
+
+    const compactionResult = await compactConversation({
+      messages: params.messages,
+      summarize,
+      trigger: 'auto',
+      abortSignal: params.abortSignal,
+      preCompactTokenCount: decision.tokenCount,
+    })
+
+    return {
+      compactionResult,
+      tracking: { compacted: true },
+    }
   }
 }
 

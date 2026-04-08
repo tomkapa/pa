@@ -2,6 +2,9 @@ import type { ContentBlockParam } from '@anthropic-ai/sdk/resources/messages/mes
 import type { Message, UserMessage, SystemMessage } from '../../types/message.js'
 import type { QueryEvent, StreamEvent } from '../../types/streamEvents.js'
 import type { ProgressEvent, ToolBatchEvent, ToolUseBlock } from '../tools/execution/types.js'
+import type { AutoCompactTrackingState, CompactionResult } from './auto-compact.js'
+
+export type { AutoCompactTrackingState, CompactionResult }
 
 export type { Message, UserMessage, SystemMessage, QueryEvent, ContentBlockParam, ProgressEvent }
 
@@ -31,6 +34,29 @@ export interface CallModelParams {
   abortSignal?: AbortSignal
 }
 
+/**
+ * Auto-compact dependency: invoked at the top of each query-loop iteration
+ * to decide whether the conversation needs summarization. Returns a result
+ * (with the boundary marker + summary messages) if compaction ran, or
+ * `null` if no compaction was needed. Optional — when omitted (e.g. in
+ * legacy tests), the loop simply skips compaction.
+ */
+export interface AutoCompactParams {
+  messages: Message[]
+  systemPrompt: string[]
+  tracking: AutoCompactTrackingState
+  abortSignal?: AbortSignal
+}
+
+export interface AutoCompactOutcome {
+  /** Present iff compaction ran. */
+  compactionResult: CompactionResult | null
+  /** Updated tracking state — caller should replace its state with this. */
+  tracking: AutoCompactTrackingState
+}
+
+export type AutoCompactFn = (params: AutoCompactParams) => Promise<AutoCompactOutcome>
+
 /** Swap real implementations for test fakes. */
 export interface QueryDeps {
   callModel: (params: CallModelParams) => AsyncGenerator<QueryEvent>
@@ -40,6 +66,13 @@ export interface QueryDeps {
     abortSignal?: AbortSignal
   }) => AsyncGenerator<ToolBatchEvent>
   uuid: () => string
+  /**
+   * Optional. When present, the query loop calls this once per iteration
+   * before invoking `callModel`. If a compaction happens, the loop yields
+   * the post-compact messages and replaces its in-memory message slice
+   * with them for the next API call.
+   */
+  autoCompact?: AutoCompactFn
 }
 
 export interface AgentQueryParams {
@@ -56,4 +89,5 @@ export type AgentEvent = StreamEvent | Message | ProgressEvent
 export interface LoopState {
   messages: Message[]
   turnCount: number
+  autoCompactTracking: AutoCompactTrackingState
 }

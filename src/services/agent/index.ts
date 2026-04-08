@@ -4,7 +4,12 @@ export { createQueryDeps, type CreateQueryDepsOptions } from './deps.js'
 export type {
   AgentEvent,
   AgentQueryParams,
+  AutoCompactFn,
+  AutoCompactOutcome,
+  AutoCompactParams,
+  AutoCompactTrackingState,
   CallModelParams,
+  CompactionResult,
   QueryDeps,
   Terminal,
   TerminalReason,

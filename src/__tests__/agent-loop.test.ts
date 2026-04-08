@@ -11,8 +11,9 @@ import type {
   ToolUseInfo,
 } from '../services/agent/types.js'
 import type { ToolBatchEvent } from '../services/tools/execution/types.js'
-import { createUserMessage } from '../services/messages/factory.js'
+import { createCompactBoundaryMessage, createUserMessage } from '../services/messages/factory.js'
 import { query, queryLoop } from '../services/agent/index.js'
+import type { AutoCompactFn } from '../services/agent/types.js'
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
@@ -118,7 +119,7 @@ function makeToolResultEvent(
 function createDeps(overrides: Partial<QueryDeps> = {}): QueryDeps {
   let uuidCounter = 0
   const uuidFn = overrides.uuid ?? (() => `uuid-${++uuidCounter}`)
-  return {
+  const deps: QueryDeps = {
     callModel: overrides.callModel ?? (async function* () { /* no-op */ }),
     executeToolBatch: overrides.executeToolBatch ?? makeBatchExecutor(
       async () => ({ content: '', isError: false }),
@@ -126,6 +127,8 @@ function createDeps(overrides: Partial<QueryDeps> = {}): QueryDeps {
     ),
     uuid: uuidFn,
   }
+  if (overrides.autoCompact) deps.autoCompact = overrides.autoCompact
+  return deps
 }
 
 function sequentialCallModel(responses: AssistantMessage[]): QueryDeps['callModel'] {
@@ -707,6 +710,89 @@ describe('agent loop', () => {
 
       expect(captured[0]!.messages).toHaveLength(1)
       expect(captured[0]!.messages[0]!.role).toBe('user')
+    })
+  })
+
+  // ── Auto-compact integration ──────────────────────────────────────
+
+  describe('auto-compact', () => {
+    test('runs deps.autoCompact and yields post-compact messages when compaction fires', async () => {
+      const summaryUser = createUserMessage({ content: 'Summary: prior work', isMeta: true })
+      const boundary = createCompactBoundaryMessage({
+        trigger: 'auto',
+        preCompactTokenCount: 168_000,
+      })
+
+      const autoCompact: AutoCompactFn = mock(async () => ({
+        compactionResult: {
+          boundaryMarker: boundary,
+          summaryMessages: [summaryUser],
+          attachments: [],
+          hookResults: [],
+          preCompactTokenCount: 168_000,
+        },
+        tracking: { compacted: true },
+      }))
+
+      const capturedMessages: CallModelParams['messages'][] = []
+      const callModel: QueryDeps['callModel'] = async function* (p) {
+        capturedMessages.push(p.messages)
+        yield createAssistantMsg([textBlock('Done')])
+      }
+
+      const deps = createDeps({ callModel, autoCompact })
+
+      const userMsg = createUserMessage({ content: 'hello' })
+      const { events, terminal } = await collectAll(query(baseParams({
+        messages: [userMsg],
+        deps,
+      })))
+
+      expect(autoCompact).toHaveBeenCalledTimes(1)
+      expect(terminal.reason).toBe('completed')
+
+      // Boundary + summary should be yielded as events
+      const boundaryEvents = events.filter(e => e.type === 'system' && e.subtype === 'compact_boundary')
+      expect(boundaryEvents.length).toBe(1)
+
+      // The model call after compaction should only see post-boundary
+      // messages (i.e. the summary user message), not the original
+      // pre-compact user input.
+      expect(capturedMessages).toHaveLength(1)
+      const lastCallMessages = capturedMessages[0]!
+      expect(lastCallMessages.length).toBe(1)
+      expect(lastCallMessages[0]!.role).toBe('user')
+    })
+
+    test('skips compaction when deps.autoCompact reports no result', async () => {
+      const autoCompact: AutoCompactFn = mock(async (params) => ({
+        compactionResult: null,
+        tracking: params.tracking,
+      }))
+
+      const deps = createDeps({
+        callModel: sequentialCallModel([createAssistantMsg([textBlock('Hi')])]),
+        autoCompact,
+      })
+
+      const { events, terminal } = await collectAll(query(baseParams({ deps })))
+
+      expect(autoCompact).toHaveBeenCalledTimes(1)
+      expect(terminal.reason).toBe('completed')
+      // No boundary events were emitted
+      const boundaryEvents = events.filter(
+        e => e.type === 'system' && e.subtype === 'compact_boundary',
+      )
+      expect(boundaryEvents.length).toBe(0)
+    })
+
+    test('does not require autoCompact in deps (legacy fakes still work)', async () => {
+      // Old tests build deps without `autoCompact` — make sure that still works.
+      const deps = createDeps({
+        callModel: sequentialCallModel([createAssistantMsg([textBlock('Hi')])]),
+      })
+      const { terminal } = await collectAll(query(baseParams({ deps })))
+      expect(terminal.reason).toBe('completed')
     })
   })
 

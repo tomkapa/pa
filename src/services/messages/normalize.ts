@@ -45,6 +45,24 @@ function systemToUserMessage(m: SystemMessage): UserMessage {
   }
 }
 
+/**
+ * Normalize messages and project them onto the `{role, content}` shape the
+ * Anthropic SDK accepts. Used by the query loop and the compaction
+ * summarizer — anywhere internal `Message` history needs to become the API
+ * payload.
+ */
+export interface ApiMessageParam {
+  role: 'user' | 'assistant'
+  content: string | ContentBlockParam[]
+}
+
+export function toApiMessageParams(messages: Message[]): ApiMessageParam[] {
+  return normalizeMessagesForAPI(messages).map(m => ({
+    role: m.message.role,
+    content: m.message.content,
+  }))
+}
+
 function mergeConsecutiveUserMessages(messages: ApiMessageOutput[]): ApiMessageOutput[] {
   const result: ApiMessageOutput[] = []
 

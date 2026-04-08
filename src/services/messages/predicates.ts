@@ -1,5 +1,6 @@
 import type { ToolResultBlockParam } from '@anthropic-ai/sdk/resources/messages/messages'
 import type { Message, UserMessage } from '../../types/message.js'
+import { COMPACT_BOUNDARY_SUBTYPE } from '../../types/message.js'
 
 /**
  * Returns true if the message is a genuine human turn — actual user input,
@@ -33,4 +34,30 @@ export function isToolResultBlock(block: unknown): block is ToolResultBlockParam
     'type' in block &&
     (block as { type: unknown }).type === 'tool_result'
   )
+}
+
+/** Returns true if the message is a compact boundary marker. */
+export function isCompactBoundary(m: Message): boolean {
+  return m.type === 'system' && m.subtype === COMPACT_BOUNDARY_SUBTYPE
+}
+
+/**
+ * Returns the slice of messages starting *after* the most recent compact
+ * boundary marker. The boundary marker itself is excluded — its only purpose
+ * is to fence off pre-compact history from API serialization. Messages
+ * pushed after a compaction (the summary user message, attachments, the
+ * model's continuation) are what the model should see.
+ *
+ * If no boundary exists, returns the input unchanged.
+ */
+export function getMessagesAfterCompactBoundary(messages: Message[]): Message[] {
+  let lastBoundaryIndex = -1
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (isCompactBoundary(messages[i]!)) {
+      lastBoundaryIndex = i
+      break
+    }
+  }
+  if (lastBoundaryIndex === -1) return messages
+  return messages.slice(lastBoundaryIndex + 1)
 }

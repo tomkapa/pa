@@ -1,9 +1,10 @@
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages/messages'
 import type { AssistantMessage, Message } from '../../types/message.js'
-import { normalizeMessagesForAPI } from '../messages/normalize.js'
+import { toApiMessageParams } from '../messages/normalize.js'
 import { createSystemMessage } from '../messages/factory.js'
-import { isToolResultBlock } from '../messages/predicates.js'
+import { getMessagesAfterCompactBoundary, isToolResultBlock } from '../messages/predicates.js'
 import { getErrorMessage } from '../../utils/error.js'
+import { buildPostCompactMessages, createInitialAutoCompactTracking } from './auto-compact.js'
 import {
   endInteractionSpan,
   endLLMRequestSpan,
@@ -17,7 +18,6 @@ import type {
   AgentEvent,
   AgentQueryParams,
   CallModelParams,
-  ContentBlockParam,
   LoopState,
   Terminal,
   ToolUseInfo,
@@ -71,6 +71,7 @@ export async function* queryLoop(
   const state: LoopState = {
     messages: [...params.messages],
     turnCount: 0,
+    autoCompactTracking: createInitialAutoCompactTracking(),
   }
 
   const interactionSpan = startInteractionSpan(lastUserText(state.messages))
@@ -95,11 +96,34 @@ export async function* queryLoop(
         return terminal
       }
 
-      const apiMessages = normalizeMessagesForAPI(state.messages)
-      const messageParams: CallModelParams['messages'] = apiMessages.map(m => ({
-        role: m.message.role as 'user' | 'assistant',
-        content: m.message.content as string | ContentBlockParam[],
-      }))
+      // Auto-compact runs *before* the model API call so we never send an
+      // over-the-limit request. Pre-boundary history stays in `state.messages`
+      // for REPL scrollback but never reaches the API.
+      let visibleMessages = getMessagesAfterCompactBoundary(state.messages)
+      if (deps.autoCompact) {
+        const outcome = await deps.autoCompact({
+          messages: visibleMessages,
+          systemPrompt,
+          tracking: state.autoCompactTracking,
+          abortSignal,
+        })
+        state.autoCompactTracking = outcome.tracking
+        if (outcome.compactionResult) {
+          const postCompact = buildPostCompactMessages(outcome.compactionResult)
+          for (const msg of postCompact) {
+            yield msg
+            state.messages.push(msg)
+          }
+          // postCompact is by construction already a post-boundary slice.
+          visibleMessages = postCompact
+          logForDebugging(
+            `agent: auto-compact fired (pre=${outcome.compactionResult.preCompactTokenCount} tokens)`,
+            { level: 'info' },
+          )
+        }
+      }
+
+      const messageParams: CallModelParams['messages'] = toApiMessageParams(visibleMessages)
 
       let assistantMessage: AssistantMessage | undefined
 

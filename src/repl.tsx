@@ -8,9 +8,19 @@ import type { Message } from './types/message.js'
 import type { AgentEvent, QueryDeps } from './services/agent/types.js'
 import type { ProgressMessage } from './services/tools/types.js'
 import { createUserMessage, createSystemMessage } from './services/messages/factory.js'
-import { isToolResultBlock } from './services/messages/predicates.js'
+import {
+  getMessagesAfterCompactBoundary,
+  isToolResultBlock,
+} from './services/messages/predicates.js'
 import { query } from './services/agent/query.js'
 import { createQueryDeps } from './services/agent/deps.js'
+import {
+  buildPostCompactMessages,
+  compactConversation,
+  createAnthropicSummarizer,
+  getTokenCountFromLastResponse,
+} from './services/agent/auto-compact.js'
+import type { SummarizeFn } from './services/agent/auto-compact.js'
 import { createAnthropicClient } from './services/api/client.js'
 import { buildTool } from './services/tools/build-tool.js'
 import { readToolDef } from './tools/readTool.js'
@@ -204,6 +214,11 @@ export interface REPLDeps {
     permissionContext: ToolPermissionContext,
     pushConfirm: (confirm: ToolUseConfirm) => void,
   ) => QueryDeps
+  /**
+   * Optional summarizer used by the manual `/compact` slash command.
+   * Defaults to a real Anthropic call when omitted; tests inject a fake.
+   */
+  summarize?: SummarizeFn
 }
 
 function createDefaultREPLDeps(): REPLDeps {
@@ -219,9 +234,12 @@ function createDefaultREPLDeps(): REPLDeps {
 
   const { context: initialPermissionContext } = initializeToolPermissionContext()
 
+  const summarize: SummarizeFn = createAnthropicSummarizer(client, MODEL, MAX_TOKENS)
+
   return {
     tools,
     initialPermissionContext,
+    summarize,
     createQueryDeps: (
       abortController: AbortController,
       permissionContext: ToolPermissionContext,
@@ -332,6 +350,58 @@ export function REPL({ deps: injectedDeps }: REPLProps) {
 
   const handleSubmit = useCallback(async (value: string) => {
     if (!value.trim() || isLoadingRef.current) return
+
+    // Slash commands run client-side without invoking the model loop.
+    // `/compact [instructions]` triggers manual compaction.
+    if (value.trim().startsWith('/compact')) {
+      const customInstructions = value.trim().slice('/compact'.length).trim()
+      setInput('')
+      isLoadingRef.current = true
+      setIsLoading(true)
+      const abortController = new AbortController()
+      abortControllerRef.current = abortController
+      try {
+        if (!replDeps.summarize) {
+          throw new Error('/compact: no summarizer configured')
+        }
+        const visible = getMessagesAfterCompactBoundary(messagesRef.current)
+        if (visible.length === 0) {
+          setMessages(prev => [
+            ...prev,
+            createSystemMessage({
+              subtype: 'compact_skipped',
+              content: 'Nothing to compact yet.',
+              level: 'info',
+            }),
+          ])
+          return
+        }
+        const result = await compactConversation({
+          messages: visible,
+          summarize: replDeps.summarize,
+          trigger: 'manual',
+          customInstructions: customInstructions.length > 0 ? customInstructions : undefined,
+          abortSignal: abortController.signal,
+          preCompactTokenCount: getTokenCountFromLastResponse(visible),
+        })
+        const postCompact = buildPostCompactMessages(result)
+        setMessages(prev => [...prev, ...postCompact])
+      } catch (error: unknown) {
+        setMessages(prev => [
+          ...prev,
+          createSystemMessage({
+            subtype: 'compact_error',
+            content: `/compact failed: ${getErrorMessage(error)}`,
+            level: 'error',
+          }),
+        ])
+      } finally {
+        isLoadingRef.current = false
+        setIsLoading(false)
+        abortControllerRef.current = null
+      }
+      return
+    }
 
     const userMessage = createUserMessage({ content: value })
     const updatedMessages = [...messagesRef.current, userMessage]
