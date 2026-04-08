@@ -50,19 +50,6 @@ function lastUserText(messages: readonly Message[]): string {
   return ''
 }
 
-/** Sum text-block lengths in a tool_result `content` field. Cheap stand-in for `JSON.stringify(...).length`. */
-function toolResultTextSize(content: unknown): number {
-  if (typeof content === 'string') return content.length
-  if (!Array.isArray(content)) return 0
-  let n = 0
-  for (const part of content) {
-    if (part && typeof part === 'object' && 'text' in part && typeof part.text === 'string') {
-      n += part.text.length
-    }
-  }
-  return n
-}
-
 export async function* queryLoop(
   params: AgentQueryParams,
 ): AsyncGenerator<AgentEvent, Terminal> {
@@ -127,7 +114,14 @@ export async function* queryLoop(
 
       let assistantMessage: AssistantMessage | undefined
 
-      const llmSpan = startLLMRequestSpan('claude', messageParams.length)
+      const llmSpan = startLLMRequestSpan({
+        model: 'claude',
+        messageCount: messageParams.length,
+        parent: interactionSpan,
+        // Feed the Langfuse Input panel the exact messages the agent sent
+        // to the model — this is the high-value payload for debugging.
+        input: messageParams,
+      })
       try {
         for await (const event of deps.callModel({
           messages: messageParams,
@@ -182,6 +176,8 @@ export async function* queryLoop(
         cacheCreationTokens: usage.cache_creation_input_tokens ?? undefined,
         stopReason: assistantMessage.message.stop_reason,
         requestId: assistantMessage.requestId,
+        // Assistant response blocks (text + tool_use) -> Langfuse Output panel.
+        output: assistantMessage.message.content,
       })
 
       state.messages.push(assistantMessage)
@@ -197,7 +193,14 @@ export async function* queryLoop(
       // Index spans by tool_use_id so out-of-order results still close the right one.
       const openToolSpans = new Map<string, ReturnType<typeof startToolSpan>>()
       for (const block of toolUseBlocks) {
-        openToolSpans.set(block.id, startToolSpan(block.name, block.input))
+        openToolSpans.set(
+          block.id,
+          startToolSpan({
+            toolName: block.name,
+            input: block.input,
+            parent: interactionSpan,
+          }),
+        )
       }
 
       for await (const event of deps.executeToolBatch({
@@ -223,7 +226,11 @@ export async function* queryLoop(
           if (!span) continue
           endToolSpan(span, {
             success: part.is_error !== true,
-            outputSize: toolResultTextSize(part.content),
+            // Tool result content -> Langfuse Output panel. The tracer
+            // also derives PA_TOOL_OUTPUT_SIZE from this and handles
+            // truncation so a huge Read/Bash payload can't balloon the
+            // OTLP batch.
+            output: part.content,
           })
           openToolSpans.delete(part.tool_use_id)
         }

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { SpanStatusCode } from '@opentelemetry/api'
 import type { ContentBlock, StopReason } from '@anthropic-ai/sdk/resources/messages/messages'
 import type { AssistantMessage } from '../types/message.js'
 import type { QueryEvent } from '../types/streamEvents.js'
@@ -18,6 +19,7 @@ import {
   __resetTracerForTests,
   flushTracer,
 } from '../services/observability/tracing.js'
+import { ATTR, OP_CHAT, OP_EXECUTE_TOOL } from '../services/observability/attributes.js'
 import { snapshotEnv } from '../testing/env-snapshot.js'
 
 let restoreEnv: () => void
@@ -154,24 +156,46 @@ describe('observability/agent loop integration', () => {
     const spans = __getCollectedSpansForTests()
 
     const interactions = spans.filter(s => s.name === 'interaction')
-    const llmRequests = spans.filter(s => s.name === 'llm_request')
-    const tools = spans.filter(s => s.name === 'tool')
+    // LLM spans now follow the GenAI convention: "chat <model>"
+    const llmRequests = spans.filter(s => s.name.startsWith(`${OP_CHAT} `))
+    // Tool spans now follow the convention: "execute_tool <tool_name>"
+    const tools = spans.filter(s => s.name.startsWith(`${OP_EXECUTE_TOOL} `))
 
     expect(interactions.length).toBe(1)
     expect(llmRequests.length).toBe(2)
     expect(tools.length).toBe(1)
 
+    // Parent-child wiring: every LLM and tool span must nest under the
+    // interaction root so Langfuse can render a proper waterfall instead
+    // of a flat list of disconnected spans.
+    const interactionSpanId = interactions[0]!.spanContext().spanId
+    const interactionTraceId = interactions[0]!.spanContext().traceId
+    for (const llm of llmRequests) {
+      expect(llm.parentSpanContext?.spanId).toBe(interactionSpanId)
+      expect(llm.spanContext().traceId).toBe(interactionTraceId)
+    }
+    for (const tool of tools) {
+      expect(tool.parentSpanContext?.spanId).toBe(interactionSpanId)
+      expect(tool.spanContext().traceId).toBe(interactionTraceId)
+    }
+
     // LLM spans carry usage from the assistant message
-    expect(llmRequests[0]!.attributes['input_tokens']).toBe(100)
-    expect(llmRequests[0]!.attributes['output_tokens']).toBe(25)
-    expect(llmRequests[0]!.attributes['cache_read_tokens']).toBe(50)
-    expect(llmRequests[0]!.attributes['stop_reason']).toBe('tool_use')
-    expect(llmRequests[0]!.attributes['request_id']).toBe('req-test-123')
+    expect(llmRequests[0]!.attributes[ATTR.GEN_AI_USAGE_INPUT_TOKENS]).toBe(100)
+    expect(llmRequests[0]!.attributes[ATTR.GEN_AI_USAGE_OUTPUT_TOKENS]).toBe(25)
+    expect(llmRequests[0]!.attributes[ATTR.GEN_AI_USAGE_CACHE_READ]).toBe(50)
+    expect(llmRequests[0]!.attributes[ATTR.GEN_AI_RESPONSE_FINISH_REASONS]).toEqual(['tool_use'])
+    expect(llmRequests[0]!.attributes[ATTR.GEN_AI_RESPONSE_ID]).toBe('req-test-123')
+    // Input messages + output blocks land in the Langfuse Input/Output panels.
+    expect(llmRequests[0]!.attributes[ATTR.LANGFUSE_OBSERVATION_INPUT]).toBeDefined()
+    expect(llmRequests[0]!.attributes[ATTR.LANGFUSE_OBSERVATION_OUTPUT]).toBeDefined()
 
     // Tool span carries name + success
-    expect(tools[0]!.attributes['tool_name']).toBe('BashTool')
-    expect(tools[0]!.attributes['success']).toBe(true)
-    expect(tools[0]!.attributes['output_size']).toBeGreaterThan(0)
+    expect(tools[0]!.attributes[ATTR.GEN_AI_TOOL_NAME]).toBe('BashTool')
+    expect(tools[0]!.attributes[ATTR.PA_TOOL_SUCCESS]).toBe(true)
+    expect(Number(tools[0]!.attributes[ATTR.PA_TOOL_OUTPUT_SIZE])).toBeGreaterThan(0)
+    // Tool input + output feed the Langfuse panels.
+    expect(tools[0]!.attributes[ATTR.LANGFUSE_OBSERVATION_INPUT]).toBeDefined()
+    expect(tools[0]!.attributes[ATTR.LANGFUSE_OBSERVATION_OUTPUT]).toBeDefined()
   })
 
   test('marks tool span as failed when tool_result has is_error', async () => {
@@ -199,8 +223,13 @@ describe('observability/agent loop integration', () => {
     expect(terminal.reason).toBe('completed')
     await flushTracer()
 
-    const tool = __getCollectedSpansForTests().find(s => s.name === 'tool')!
-    expect(tool.attributes['success']).toBe(false)
+    const tool = __getCollectedSpansForTests().find(s =>
+      s.name.startsWith(`${OP_EXECUTE_TOOL} `),
+    )!
+    expect(tool).toBeDefined()
+    expect(tool.attributes[ATTR.PA_TOOL_SUCCESS]).toBe(false)
+    // Span status must propagate the failure — don't swallow errors.
+    expect(tool.status.code).toBe(SpanStatusCode.ERROR)
   })
 
   test('interaction span closes even when model throws', async () => {

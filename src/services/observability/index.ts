@@ -27,3 +27,11 @@ export {
   type LLMResponseUsage,
   type ToolResultUsage,
 } from './tracing.js'
+export {
+  ATTR,
+  GEN_AI_SYSTEM_ANTHROPIC,
+  LANGFUSE_OTEL_DEFAULT_URL,
+  OBS_TYPE_GENERATION,
+  OP_CHAT,
+  OP_EXECUTE_TOOL,
+} from './attributes.js'
