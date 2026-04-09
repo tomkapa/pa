@@ -1,4 +1,5 @@
 import type { PermissionMode, ToolPermissionContext } from './types.js'
+import { applyPermissionUpdate } from './context.js'
 
 // ---------------------------------------------------------------------------
 // Mode Display Configuration
@@ -83,6 +84,5 @@ export function getNextPermissionMode(ctx: ToolPermissionContext): PermissionMod
  * Wrapper around `getNextPermissionMode` that produces the updated context.
  */
 export function cyclePermissionMode(ctx: ToolPermissionContext): ToolPermissionContext {
-  const nextMode = getNextPermissionMode(ctx)
-  return { ...ctx, mode: nextMode }
+  return applyPermissionUpdate(ctx, { type: 'setMode', mode: getNextPermissionMode(ctx) })
 }

@@ -43,6 +43,8 @@ import { editToolDef } from './tools/editTool.js'
 import { globToolDef } from './tools/globTool.js'
 import { grepToolDef } from './tools/grepTool.js'
 import { bashToolDef } from './tools/bashTool.js'
+import { enterPlanModeToolDef } from './tools/enterPlanModeTool.js'
+import { exitPlanModeToolDef } from './tools/exitPlanModeTool.js'
 import { FileStateCache } from './utils/fileStateCache.js'
 import type { Tool } from './services/tools/types.js'
 import { getErrorMessage } from './utils/error.js'
@@ -82,10 +84,11 @@ const MENTION_PICKER_LIMIT = 15
 
 async function buildPromptForSubmit(
   tools: Tool<unknown, unknown>[],
+  permissionContext?: ToolPermissionContext,
 ): Promise<string[]> {
   const enabledTools = new Set(tools.map(t => t.name))
   const [defaultPrompt, userCtx, sysCtx] = await Promise.all([
-    getSystemPrompt({ enabledTools, modelId: MODEL }),
+    getSystemPrompt({ enabledTools, modelId: MODEL, permissionContext }),
     getUserContext(),
     getSystemContext(),
   ])
@@ -247,6 +250,10 @@ export interface REPLDeps {
     abortController: AbortController,
     permissionContext: ToolPermissionContext,
     pushConfirm: (confirm: ToolUseConfirm) => void,
+    getPermissionContext?: () => ToolPermissionContext,
+    setPermissionContext?: (
+      updater: (ctx: ToolPermissionContext) => ToolPermissionContext,
+    ) => void,
   ) => QueryDeps
   /**
    * Optional summarizer used by the manual `/compact` slash command.
@@ -264,7 +271,12 @@ function createDefaultREPLDeps(): REPLDeps {
   const globTool = buildTool(globToolDef())
   const grepTool = buildTool(grepToolDef())
   const bashTool = buildTool(bashToolDef())
-  const tools: Tool<unknown, unknown>[] = [readTool, writeTool, editTool, globTool, grepTool, bashTool]
+  const enterPlanModeTool = buildTool(enterPlanModeToolDef())
+  const exitPlanModeTool = buildTool(exitPlanModeToolDef())
+  const tools: Tool<unknown, unknown>[] = [
+    readTool, writeTool, editTool, globTool, grepTool, bashTool,
+    enterPlanModeTool, exitPlanModeTool,
+  ]
 
   const { context: initialPermissionContext } = initializeToolPermissionContext()
 
@@ -278,6 +290,10 @@ function createDefaultREPLDeps(): REPLDeps {
       abortController: AbortController,
       permissionContext: ToolPermissionContext,
       pushConfirm: (confirm: ToolUseConfirm) => void,
+      getPermissionContext?: () => ToolPermissionContext,
+      setPermissionContext?: (
+        updater: (ctx: ToolPermissionContext) => ToolPermissionContext,
+      ) => void,
     ) =>
       createQueryDeps({
         client,
@@ -287,6 +303,8 @@ function createDefaultREPLDeps(): REPLDeps {
         abortController,
         permissionContext,
         pushConfirm,
+        getPermissionContext,
+        setPermissionContext,
       }),
   }
 }
@@ -469,9 +487,11 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
             abortController,
             permissionContextRef.current,
             pushConfirm,
+            () => permissionContextRef.current,
+            (updater) => setPermissionContext(updater),
           ),
         ),
-        buildPromptForSubmit(replDeps.tools),
+        buildPromptForSubmit(replDeps.tools, permissionContextRef.current),
       ])
 
       // Between-iterations drain: picks up messages the user buffered

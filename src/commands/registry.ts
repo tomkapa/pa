@@ -23,6 +23,8 @@ import {
   resetUserContextCache,
   resetSystemContextCache,
 } from '../services/system-prompt/index.js'
+import { clearPlanSlug } from '../services/plans/index.js'
+import { getSessionId } from '../services/observability/state.js'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -97,6 +99,7 @@ const clearCommand: SlashCommand = {
     resetSectionCache()
     resetUserContextCache()
     resetSystemContextCache()
+    clearPlanSlug(getSessionId())
     ctx.addSystemMessage('conversation_cleared', 'Conversation cleared.', 'info')
   },
 }

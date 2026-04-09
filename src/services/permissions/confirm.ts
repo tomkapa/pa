@@ -28,7 +28,7 @@ export interface ToolUseConfirm {
 // ---------------------------------------------------------------------------
 
 export function createCanUseToolWithConfirm(
-  permissionCtx: ToolPermissionContext,
+  getPermissionCtx: () => ToolPermissionContext,
   pushConfirm: (confirm: ToolUseConfirm) => void,
 ): CanUseToolFn {
   return async (
@@ -36,7 +36,7 @@ export function createCanUseToolWithConfirm(
     input: unknown,
     toolUseCtx: ToolUseContext,
   ): Promise<PermissionDecision> => {
-    const decision = await hasPermissionsToUseTool(tool, input, permissionCtx, toolUseCtx)
+    const decision = await hasPermissionsToUseTool(tool, input, getPermissionCtx(), toolUseCtx)
 
     if (decision.behavior === 'allow' || decision.behavior === 'deny') {
       return decision

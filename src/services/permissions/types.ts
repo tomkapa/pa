@@ -136,6 +136,8 @@ export interface AdditionalWorkingDirectory {
 
 export interface ToolPermissionContext {
   readonly mode: PermissionMode
+  /** Saved mode before entering plan mode, restored on exit. */
+  readonly prePlanMode?: PermissionMode
   readonly alwaysAllowRules: RulesBySource
   readonly alwaysDenyRules: RulesBySource
   readonly alwaysAskRules: RulesBySource

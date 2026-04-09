@@ -52,22 +52,35 @@ export interface CreateQueryDepsOptions {
   abortController: AbortController
   permissionContext: ToolPermissionContext
   pushConfirm?: (confirm: ToolUseConfirm) => void
+  /** Called by tools that need to update permission state (e.g. plan mode). */
+  getPermissionContext?: () => ToolPermissionContext
+  setPermissionContext?: (
+    updater: (ctx: ToolPermissionContext) => ToolPermissionContext,
+  ) => void
 }
 
-function createCanUseTool(permissionCtx: ToolPermissionContext): CanUseToolFn {
+function createCanUseTool(getCtx: () => ToolPermissionContext): CanUseToolFn {
   return async (tool, input, toolUseCtx) =>
-    hasPermissionsToUseTool(tool, input, permissionCtx, toolUseCtx)
+    hasPermissionsToUseTool(tool, input, getCtx(), toolUseCtx)
 }
 
 export function createQueryDeps(options: CreateQueryDepsOptions): QueryDeps {
-  const { client, model, maxTokens, tools, abortController, permissionContext, pushConfirm } = options
+  const {
+    client, model, maxTokens, tools, abortController, permissionContext,
+    pushConfirm, getPermissionContext, setPermissionContext,
+  } = options
+
+  // Read the latest permission context on every tool call so mid-turn
+  // mode switches (Shift+Tab) take effect between iterations — same
+  // pattern as drainQueuedInput for buffered user messages.
+  const resolveCtx = getPermissionContext ?? (() => permissionContext)
 
   // Convert tool definitions once — reused across all turns in this query
   let apiToolsPromise: Promise<AnthropicTool[]> | undefined
 
   const canUseTool = pushConfirm
-    ? createCanUseToolWithConfirm(permissionContext, pushConfirm)
-    : createCanUseTool(permissionContext)
+    ? createCanUseToolWithConfirm(resolveCtx, pushConfirm)
+    : createCanUseTool(resolveCtx)
 
   const summarize = createAnthropicSummarizer(client, model, maxTokens)
   const autoCompact = createAutoCompactImpl(model, summarize)
@@ -78,7 +91,10 @@ export function createQueryDeps(options: CreateQueryDepsOptions): QueryDeps {
       return callModelImpl(client, model, maxTokens, params, apiToolsPromise)
     },
     executeToolBatch(params) {
-      return executeToolBatchImpl(params, tools, abortController, canUseTool)
+      return executeToolBatchImpl(
+        params, tools, abortController, canUseTool,
+        getPermissionContext, setPermissionContext,
+      )
     },
     uuid: () => crypto.randomUUID(),
     autoCompact,
@@ -151,6 +167,10 @@ async function* executeToolBatchImpl(
   tools: Tool<unknown, unknown>[],
   abortController: AbortController,
   canUseTool: CanUseToolFn,
+  getPermissionContext?: () => ToolPermissionContext,
+  setPermissionContext?: (
+    updater: (ctx: ToolPermissionContext) => ToolPermissionContext,
+  ) => void,
 ): AsyncGenerator<ToolBatchEvent> {
   // runTools only reads assistantMessage.uuid — stub the rest
   const stubAssistant = { uuid: params.assistantMessageUUID } as AssistantMessage
@@ -159,6 +179,8 @@ async function* executeToolBatchImpl(
     abortController,
     messages: [],
     options: { tools, debug: false, verbose: false },
+    getPermissionContext,
+    setPermissionContext,
   }
 
   for await (const event of runTools(params.toolUseBlocks, stubAssistant, canUseTool, context)) {

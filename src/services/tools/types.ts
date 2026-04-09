@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import type { ZodType } from 'zod'
 import type { ToolResultBlockParam } from '@anthropic-ai/sdk/resources/messages/messages'
 import type { Message } from '../../types/message.js'
-import type { PermissionResult } from '../permissions/types.js'
+import type { PermissionResult, ToolPermissionContext } from '../permissions/types.js'
 
 export type { ToolResultBlockParam }
 
@@ -75,6 +75,19 @@ export interface ToolUseContext {
    * Never sent to the API.
    */
   onProgress?: (data: unknown) => void
+  /**
+   * Read the current permission context. Used by tools that need to inspect
+   * permission state (e.g., plan mode tools reading the current mode).
+   */
+  getPermissionContext?: () => ToolPermissionContext
+  /**
+   * Update the permission context via an updater function. Used by tools
+   * that need to modify permission state (e.g., plan mode tools changing
+   * the active mode). The update takes effect on the next agent turn.
+   */
+  setPermissionContext?: (
+    updater: (ctx: ToolPermissionContext) => ToolPermissionContext,
+  ) => void
 }
 
 // ---------------------------------------------------------------------------

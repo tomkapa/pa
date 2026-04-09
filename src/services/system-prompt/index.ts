@@ -29,6 +29,7 @@ export {
   getMcpInstructionsSection,
   getMemorySection,
   getOutputStyleSection,
+  getPlanModeSection,
   getSessionGuidanceSection,
   type EnvironmentInfo,
   type MCPServerInfo,

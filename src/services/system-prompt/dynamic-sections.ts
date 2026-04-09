@@ -17,6 +17,9 @@ import {
   loadMemory,
   type LoadMemoryOptions,
 } from '../memory/index.js'
+import type { ToolPermissionContext } from '../permissions/types.js'
+import { getPlanFilePath } from '../plans/index.js'
+import { getSessionId } from '../observability/state.js'
 
 /**
  * Minimal shape for an MCP server we accept here. Real `MCPClient` types
@@ -148,6 +151,32 @@ export function getLanguageSection(language?: string): string | null {
 export function getOutputStyleSection(config?: string): string | null {
   if (!config || config.trim().length === 0) return null
   return `# Output style\n${config.trim()}`
+}
+
+/**
+ * Build the plan-mode system prompt section. Only included when the user
+ * is currently in plan mode. Tells the model where to write its plan and
+ * what restrictions apply.
+ */
+export function getPlanModeSection(
+  permissionContext?: ToolPermissionContext,
+): string | null {
+  if (!permissionContext || permissionContext.mode !== 'plan') return null
+
+  const planPath = getPlanFilePath(getSessionId())
+  return [
+    '# Plan Mode',
+    '',
+    'You are currently in PLAN MODE.',
+    '',
+    'In plan mode:',
+    '- File writes and edits are blocked, EXCEPT writes to your plan file',
+    '- Your task is to explore and design, not implement',
+    `- Your plan file path is: ${planPath}`,
+    '- Write your plan to the plan file using the Write or Edit tools',
+    '- When your plan is ready, call the ExitPlanMode tool to request user approval',
+    '- If your plan is rejected, iterate on the plan file and call ExitPlanMode again',
+  ].join('\n')
 }
 
 /**

@@ -35,8 +35,19 @@ export function applyPermissionUpdate(
   update: PermissionUpdate,
 ): ToolPermissionContext {
   switch (update.type) {
-    case 'setMode':
-      return { ...ctx, mode: update.mode }
+    case 'setMode': {
+      const enteringPlan = update.mode === 'plan' && ctx.mode !== 'plan'
+      const leavingPlan = update.mode !== 'plan' && ctx.mode === 'plan'
+      return {
+        ...ctx,
+        mode: update.mode,
+        prePlanMode: enteringPlan
+          ? ctx.mode
+          : leavingPlan
+            ? undefined
+            : ctx.prePlanMode,
+      }
+    }
 
     case 'addRules':
       return {

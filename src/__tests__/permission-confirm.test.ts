@@ -27,7 +27,7 @@ describe('createCanUseToolWithConfirm', () => {
       alwaysAllowRules: { session: ['TestTool'] },
     })
     const pushConfirm = mock(() => {})
-    const canUseTool = createCanUseToolWithConfirm(ctx, pushConfirm)
+    const canUseTool = createCanUseToolWithConfirm(() => ctx, pushConfirm)
 
     const tool = buildTool(makeToolDef())
     const result = await canUseTool(tool, { value: 'hi' }, makeContext())
@@ -41,7 +41,7 @@ describe('createCanUseToolWithConfirm', () => {
       alwaysDenyRules: { session: ['TestTool'] },
     })
     const pushConfirm = mock(() => {})
-    const canUseTool = createCanUseToolWithConfirm(ctx, pushConfirm)
+    const canUseTool = createCanUseToolWithConfirm(() => ctx, pushConfirm)
 
     const tool = buildTool(makeToolDef())
     const result = await canUseTool(tool, { value: 'hi' }, makeContext())
@@ -56,7 +56,7 @@ describe('createCanUseToolWithConfirm', () => {
     const pushConfirm = mock((confirm: ToolUseConfirm) => {
       capturedConfirm = confirm
     })
-    const canUseTool = createCanUseToolWithConfirm(ctx, pushConfirm)
+    const canUseTool = createCanUseToolWithConfirm(() => ctx, pushConfirm)
 
     const tool = buildTool(makeToolDef())
 
@@ -85,7 +85,7 @@ describe('createCanUseToolWithConfirm', () => {
     const pushConfirm = mock((confirm: ToolUseConfirm) => {
       capturedConfirm = confirm
     })
-    const canUseTool = createCanUseToolWithConfirm(ctx, pushConfirm)
+    const canUseTool = createCanUseToolWithConfirm(() => ctx, pushConfirm)
 
     const tool = buildTool(makeToolDef())
     const resultPromise = canUseTool(tool, { value: 'hi' }, makeContext())
@@ -106,7 +106,7 @@ describe('createCanUseToolWithConfirm', () => {
     const pushConfirm = mock((confirm: ToolUseConfirm) => {
       capturedConfirm = confirm
     })
-    const canUseTool = createCanUseToolWithConfirm(ctx, pushConfirm)
+    const canUseTool = createCanUseToolWithConfirm(() => ctx, pushConfirm)
 
     const tool = buildTool(makeToolDef())
     const resultPromise = canUseTool(tool, { value: 'hi' }, makeContext())
@@ -127,7 +127,7 @@ describe('createCanUseToolWithConfirm', () => {
     const pushConfirm = mock((confirm: ToolUseConfirm) => {
       capturedConfirm = confirm
     })
-    const canUseTool = createCanUseToolWithConfirm(ctx, pushConfirm)
+    const canUseTool = createCanUseToolWithConfirm(() => ctx, pushConfirm)
 
     const tool = buildTool(makeToolDef())
     const resultPromise = canUseTool(tool, { value: 'hi' }, makeContext())
@@ -148,7 +148,7 @@ describe('createCanUseToolWithConfirm', () => {
     const pushConfirm = mock((confirm: ToolUseConfirm) => {
       capturedConfirm = confirm
     })
-    const canUseTool = createCanUseToolWithConfirm(ctx, pushConfirm)
+    const canUseTool = createCanUseToolWithConfirm(() => ctx, pushConfirm)
 
     const tool = buildTool(makeToolDef())
     const resultPromise = canUseTool(tool, { value: 'hi' }, makeContext())
@@ -171,7 +171,7 @@ describe('createCanUseToolWithConfirm', () => {
     const pushConfirm = mock((confirm: ToolUseConfirm) => {
       capturedConfirm = confirm
     })
-    const canUseTool = createCanUseToolWithConfirm(ctx, pushConfirm)
+    const canUseTool = createCanUseToolWithConfirm(() => ctx, pushConfirm)
 
     const tool = buildTool(makeToolDef())
     const resultPromise = canUseTool(tool, { value: 'hi' }, makeContext())

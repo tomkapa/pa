@@ -6,6 +6,8 @@ import type {
 import { findFirstMatchingRule } from './context.js'
 import { isFilesystemCommand } from './safety.js'
 import { checkBashCommandSecurity, matchBashAllowRules } from './command-security.js'
+import { isSessionPlanFile } from '../plans/index.js'
+import { expandPath } from '../../utils/expandPath.js'
 
 /**
  * The permission pipeline — decides whether a tool can execute.
@@ -77,6 +79,24 @@ export async function hasPermissionsToUseTool(
           },
         },
         message: `Denied by ${denyMatch.source} rule: ${denyMatch.ruleString}`,
+      }
+    }
+  }
+
+  // 1.5. Internal editable paths — plan files bypass all further checks.
+  // Only the CURRENT session's plan file qualifies; other plan files are
+  // treated normally. Deny rules (above) still win over this carve-out.
+  // Short-circuit: skip the filesystem work when not in plan mode.
+  if (
+    permissionCtx.mode === 'plan' &&
+    (toolName === 'Write' || toolName === 'Edit')
+  ) {
+    const filePath = extractToolContent(tool, input)
+    if (filePath && isSessionPlanFile(expandPath(filePath))) {
+      return {
+        behavior: 'allow',
+        reason: { type: 'toolSpecific', description: 'Session plan file is always writable' },
+        updatedInput: input,
       }
     }
   }

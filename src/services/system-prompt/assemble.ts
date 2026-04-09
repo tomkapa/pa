@@ -23,10 +23,12 @@ import {
   getMcpInstructionsSection,
   getMemorySection,
   getOutputStyleSection,
+  getPlanModeSection,
   getSessionGuidanceSection,
   type MCPServerInfo,
   type SkillSummary,
 } from './dynamic-sections.js'
+import type { ToolPermissionContext } from '../permissions/types.js'
 import {
   getActionsSection,
   getDoingTasksSection,
@@ -49,6 +51,8 @@ export interface SystemPromptAssemblyOptions {
   mcpClients?: ReadonlyArray<MCPServerInfo>
   /** Loaded skill summaries for the session-guidance section. */
   skills?: ReadonlyArray<SkillSummary>
+  /** Current permission context — used for plan-mode system prompt injection. */
+  permissionContext?: ToolPermissionContext
   /** Optional language preference (e.g. "French"). */
   language?: string
   /** Optional output-style configuration string. */
@@ -83,6 +87,7 @@ export async function getSystemPrompt(
     skills = [],
     language,
     outputStyle,
+    permissionContext,
   } = options
 
   // Pre-compute env info synchronously so it can be embedded in a cached
@@ -100,6 +105,11 @@ export async function getSystemPrompt(
         'mcp_instructions',
         () => getMcpInstructionsSection(mcpClients),
         'MCP servers connect/disconnect between turns',
+      ),
+      uncachedSection(
+        'plan_mode',
+        () => getPlanModeSection(permissionContext),
+        'Permission mode changes between turns',
       ),
     ]
 

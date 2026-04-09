@@ -8,6 +8,8 @@ import type { ToolUseConfirm } from '../services/permissions/confirm.js'
 import type { PermissionUpdate } from '../services/permissions/types.js'
 import { expandPath } from '../utils/expandPath.js'
 import { truncateCommand } from '../tools/bashToolUI.js'
+import { getPlan } from '../services/plans/index.js'
+import { getSessionId } from '../services/observability/state.js'
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -412,6 +414,45 @@ function FilesystemPermissionRequest({ confirm, onDone }: PermissionRequestProps
 }
 
 // ---------------------------------------------------------------------------
+// PlanModePermissionRequest — for EnterPlanMode / ExitPlanMode
+// ---------------------------------------------------------------------------
+
+function PlanModePermissionRequest({ confirm, onDone }: PermissionRequestProps) {
+  const isEnter = confirm.tool.name === 'EnterPlanMode'
+  const title = isEnter ? 'Enter Plan Mode' : 'Exit Plan Mode'
+  const color = isEnter ? 'blue' : 'green'
+
+  const plan = useMemo(() => {
+    if (isEnter) return null
+    const content = getPlan(getSessionId())
+    if (!content || content.trim() === '') return null
+    return content
+  }, [isEnter])
+
+  const options: PermissionOption[] = [
+    {
+      label: 'Yes',
+      onSelect: () => { confirm.onAllow(confirm.input, []); onDone() },
+    },
+    {
+      label: 'No',
+      onSelect: () => { confirm.onReject(); onDone() },
+    },
+  ]
+
+  return (
+    <PermissionDialog title={title} subtitle={confirm.message} color={color}>
+      {plan && (
+        <Box flexDirection="column" marginBottom={1}>
+          <Text>{plan}</Text>
+        </Box>
+      )}
+      <PermissionPrompt options={options} />
+    </PermissionDialog>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // PermissionRequest — router that dispatches by tool name
 // ---------------------------------------------------------------------------
 
@@ -429,6 +470,9 @@ export function PermissionRequest({ confirm, onDone }: PermissionRequestProps) {
     case 'Grep':
     case 'Read':
       return <FilesystemPermissionRequest confirm={confirm} onDone={onDone} />
+    case 'EnterPlanMode':
+    case 'ExitPlanMode':
+      return <PlanModePermissionRequest confirm={confirm} onDone={onDone} />
     default:
       return <FallbackPermissionRequest confirm={confirm} onDone={onDone} />
   }
