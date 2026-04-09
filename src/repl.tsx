@@ -47,6 +47,7 @@ import { enterPlanModeToolDef } from './tools/enterPlanModeTool.js'
 import { exitPlanModeToolDef } from './tools/exitPlanModeTool.js'
 import { FileStateCache } from './utils/fileStateCache.js'
 import type { Tool } from './services/tools/types.js'
+import { loadAllMcpTools } from './services/mcp/index.js'
 import { getErrorMessage } from './utils/error.js'
 import { initializeToolPermissionContext } from './services/permissions/initialize.js'
 import { cyclePermissionMode } from './services/permissions/mode-cycling.js'
@@ -277,6 +278,17 @@ function createDefaultREPLDeps(): REPLDeps {
     readTool, writeTool, editTool, globTool, grepTool, bashTool,
     enterPlanModeTool, exitPlanModeTool,
   ]
+
+  // Start loading MCP tools in the background. The tools array is mutated
+  // in-place so all closures that captured it see the new tools. By the time
+  // the user submits their first message, MCP tools will be registered.
+  loadAllMcpTools(process.cwd()).then(mcpTools => {
+    if (mcpTools.length > 0) {
+      tools.push(...mcpTools)
+    }
+  }).catch(() => {
+    // loadAllMcpTools already logs errors internally; swallow here.
+  })
 
   const { context: initialPermissionContext } = initializeToolPermissionContext()
 

@@ -2,7 +2,9 @@ import { Command, Option } from 'commander'
 import { createRoot } from '../ink.js'
 import { App, type SessionBoot } from '../app.js'
 import type { REPLSessionBinding } from '../repl.js'
+import { shutdownAllMcpServers } from '../services/mcp/index.js'
 import { getErrorMessage } from '../utils/error.js'
+import { PA_VERSION } from '../version.js'
 
 function parseBoot(options: { continue?: boolean; resume?: string | boolean }): SessionBoot {
   const hasContinue = options.continue === true
@@ -31,6 +33,9 @@ process.on('exit', () => {
 })
 
 async function drainAndExit(code: number): Promise<void> {
+  // Shut down MCP servers first to avoid zombie subprocesses.
+  await shutdownAllMcpServers().catch(() => {})
+
   const writer = activeBinding?.writer
   if (writer) {
     try { await writer.close() } catch (error) {
@@ -45,7 +50,7 @@ process.on('SIGTERM', () => { void drainAndExit(143) })
 
 const program = new Command()
   .name('pa')
-  .version('0.1.0')
+  .version(PA_VERSION)
   .description('An AI coding agent')
   .option('-c, --continue', 'Resume the most recent session in this project')
   .addOption(
@@ -69,6 +74,9 @@ const program = new Command()
       />,
     )
     await instance.waitUntilExit()
+    // MCP shutdown is handled here for normal exit; drainAndExit handles signal exits.
+    // shutdownAllMcpServers is idempotent (clears the pool first) so double-calls are safe.
+    await shutdownAllMcpServers().catch(() => {})
     if (activeBinding) {
       try { await activeBinding.writer.close() } catch (error) {
         process.stderr.write(`pa: failed to flush session — ${getErrorMessage(error)}\n`)

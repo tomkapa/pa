@@ -75,8 +75,11 @@ export function createQueryDeps(options: CreateQueryDepsOptions): QueryDeps {
   // pattern as drainQueuedInput for buffered user messages.
   const resolveCtx = getPermissionContext ?? (() => permissionContext)
 
-  // Convert tool definitions once — reused across all turns in this query
+  // Recompute API tools each turn so late-arriving MCP tools are included.
+  // `toApiTools` is cheap (prompt() calls are fast string returns) and the
+  // tools array may grow after MCP servers connect.
   let apiToolsPromise: Promise<AnthropicTool[]> | undefined
+  let lastToolsLength = tools.length
 
   const canUseTool = pushConfirm
     ? createCanUseToolWithConfirm(resolveCtx, pushConfirm)
@@ -87,6 +90,11 @@ export function createQueryDeps(options: CreateQueryDepsOptions): QueryDeps {
 
   return {
     callModel(params: CallModelParams): AsyncGenerator<QueryEvent> {
+      // Invalidate the cached API tools when the tools array grows (MCP tools arrived).
+      if (tools.length !== lastToolsLength) {
+        apiToolsPromise = undefined
+        lastToolsLength = tools.length
+      }
       apiToolsPromise ??= toApiTools(tools)
       return callModelImpl(client, model, maxTokens, params, apiToolsPromise)
     },

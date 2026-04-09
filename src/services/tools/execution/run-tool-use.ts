@@ -38,19 +38,26 @@ export async function* runToolUse(
     return
   }
 
-  const parseResult = tool.inputSchema.safeParse(input)
-  if (!parseResult.success) {
-    const formatted = parseResult.error.issues
-      .map(i => `${i.path.join('.')}: ${i.message}`)
-      .join('; ')
-    yield makeErrorResult(
-      toolUseID,
-      `Input validation error for ${toolName}: ${formatted}`,
-      assistantMessageUUID,
-    )
-    return
+  // MCP tools provide raw JSON Schema — the remote server validates input,
+  // so we pass it through without Zod parsing.
+  let validatedInput: unknown
+  if (tool.inputJSONSchema) {
+    validatedInput = input
+  } else {
+    const parseResult = tool.inputSchema.safeParse(input)
+    if (!parseResult.success) {
+      const formatted = parseResult.error.issues
+        .map(i => `${i.path.join('.')}: ${i.message}`)
+        .join('; ')
+      yield makeErrorResult(
+        toolUseID,
+        `Input validation error for ${toolName}: ${formatted}`,
+        assistantMessageUUID,
+      )
+      return
+    }
+    validatedInput = parseResult.data
   }
-  const validatedInput = parseResult.data
 
   if (tool.validateInput) {
     const validation = await tool.validateInput(validatedInput, context)

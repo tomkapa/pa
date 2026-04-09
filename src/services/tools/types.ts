@@ -107,7 +107,19 @@ export interface ToolResult<T> {
 export interface Tool<Input = unknown, Output = unknown> {
   name: string
   inputSchema: ZodType<Input>
+  /**
+   * Raw JSON Schema object for tools that bypass Zod (e.g. MCP tools).
+   * When set, `toApiTools` uses this directly instead of converting
+   * `inputSchema` via `zodToJsonSchema`, and `runToolUse` passes input
+   * through without Zod validation (the remote server validates instead).
+   */
+  inputJSONSchema?: Record<string, unknown>
   maxResultSizeChars: number
+
+  /** True for tools discovered from an MCP server. */
+  isMcp?: boolean
+  /** MCP provenance — server name and original (unprefixed) tool name. */
+  mcpInfo?: { serverName: string; toolName: string }
 
   // Core execution
   call(input: Input, context: ToolUseContext): Promise<ToolResult<Output>>
@@ -158,7 +170,11 @@ export interface Tool<Input = unknown, Output = unknown> {
 export interface ToolDef<Input = unknown, Output = unknown> {
   name: string
   inputSchema: ZodType<Input>
+  inputJSONSchema?: Record<string, unknown>
   maxResultSizeChars: number
+
+  isMcp?: boolean
+  mcpInfo?: { serverName: string; toolName: string }
 
   call(input: Input, context: ToolUseContext): Promise<ToolResult<Output>>
   prompt(): Promise<string>

@@ -16,6 +16,22 @@ export async function toApiTools(
   )
 
   return enabledTools.map((tool, i) => {
+    // MCP tools provide raw JSON Schema directly — skip the Zod conversion.
+    if (tool.inputJSONSchema) {
+      const raw = tool.inputJSONSchema
+      return {
+        name: tool.name,
+        description: descriptions[i],
+        input_schema: {
+          type: 'object' as const,
+          ...('properties' in raw ? { properties: raw.properties } : {}),
+          ...('required' in raw && Array.isArray(raw.required)
+            ? { required: raw.required as string[] }
+            : {}),
+        },
+      }
+    }
+
     const jsonSchema = zodToJsonSchema(tool.inputSchema, { target: 'openApi3' })
 
     return {

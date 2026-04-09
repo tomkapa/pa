@@ -25,6 +25,7 @@ import {
 } from '../services/system-prompt/index.js'
 import { clearPlanSlug } from '../services/plans/index.js'
 import { getSessionId } from '../services/observability/state.js'
+import { getAllConnections } from '../services/mcp/index.js'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -104,6 +105,32 @@ const clearCommand: SlashCommand = {
   },
 }
 
+const mcpCommand: SlashCommand = {
+  name: 'mcp',
+  description: 'Show MCP server connection status',
+  execute: async (ctx) => {
+    const connections = getAllConnections()
+    if (connections.length === 0) {
+      ctx.addSystemMessage('mcp_status', 'No MCP servers configured. Add an mcp.json to use MCP tools.', 'info')
+      return
+    }
+
+    const lines = connections.map(c => {
+      if (c.type === 'connected') {
+        const caps = Object.keys(c.capabilities).join(', ') || 'none'
+        return `  ${c.name}: connected (capabilities: ${caps})`
+      }
+      return `  ${c.name}: failed — ${c.error}`
+    })
+
+    ctx.addSystemMessage(
+      'mcp_status',
+      `MCP servers:\n${lines.join('\n')}`,
+      'info',
+    )
+  },
+}
+
 // ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------
@@ -114,6 +141,7 @@ const clearCommand: SlashCommand = {
 export const SLASH_COMMANDS: readonly SlashCommand[] = [
   clearCommand,
   compactCommand,
+  mcpCommand,
 ]
 
 /**
