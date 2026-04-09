@@ -95,12 +95,14 @@ export function enterPlanModeToolDef(): ToolDef<EnterPlanModeInput, EnterPlanMod
 Your plan file: ${output.planFilePath}
 
 In plan mode you should:
-1. Explore the codebase with Read, Glob, Grep
+1. Explore the codebase with Read, Glob, Grep (read-only tools ONLY)
 2. Design an implementation approach
 3. Write your plan to the plan file above using the Write tool
 4. Call ExitPlanMode when the plan is ready for user approval
 
-DO NOT write or edit any files other than the plan file. This is a read-only exploration phase.`,
+DO NOT write or edit any files other than the plan file.
+DO NOT use Bash — shell commands are blocked in plan mode.
+This is a read-only exploration phase.`,
       }
     },
   }

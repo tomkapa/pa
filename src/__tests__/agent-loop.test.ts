@@ -129,6 +129,7 @@ function createDeps(overrides: Partial<QueryDeps> = {}): QueryDeps {
   }
   if (overrides.autoCompact) deps.autoCompact = overrides.autoCompact
   if (overrides.drainQueuedInput) deps.drainQueuedInput = overrides.drainQueuedInput
+  if (overrides.getPermissionMode) deps.getPermissionMode = overrides.getPermissionMode
   return deps
 }
 
@@ -1045,6 +1046,223 @@ describe('agent loop', () => {
       }
 
       // Explicitly omit drainQueuedInput — mirror an older deps shape.
+      const deps = createDeps({ callModel })
+
+      const { terminal } = await collectAll(query(baseParams({ deps })))
+      expect(terminal.reason).toBe('completed')
+    })
+  })
+
+  // ── Mode-change injection ─────────────────────────────────────────
+
+  describe('mode-change injection', () => {
+    test('injects plan-mode system-reminder when mode changes to plan mid-turn', async () => {
+      let callIndex = 0
+      let currentMode: 'default' | 'plan' = 'default'
+
+      let uuidCounter = 0
+      const uuidFn = () => `uuid-${++uuidCounter}`
+
+      const callModel: QueryDeps['callModel'] = async function* (params) {
+        callIndex++
+        if (callIndex === 1) {
+          // First call: model uses a tool. Between iterations, mode changes.
+          yield createAssistantMsg(
+            [toolUseBlock('toolu_1', 'read_file', { path: 'a.ts' })],
+            'tool_use',
+          )
+        } else {
+          // Second call: model sees the mode-change message and completes.
+          // Verify the mode-change message is in the messages sent to the model.
+          const lastUserMsg = params.messages.at(-1)
+          expect(lastUserMsg?.role).toBe('user')
+          const content = lastUserMsg?.content
+          if (typeof content === 'string') {
+            expect(content).toContain('PLAN MODE')
+          } else if (Array.isArray(content)) {
+            const textContent = content
+              .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+              .map(b => b.text)
+              .join('')
+            expect(textContent).toContain('PLAN MODE')
+          }
+          yield createAssistantMsg([textBlock('Switching to plan mode.')])
+        }
+      }
+
+      const deps = createDeps({
+        callModel,
+        executeToolBatch: makeBatchExecutor(
+          async () => {
+            // Simulate user toggling plan mode during tool execution
+            currentMode = 'plan'
+            return { content: 'ok', isError: false }
+          },
+          uuidFn,
+        ),
+        uuid: uuidFn,
+        getPermissionMode: () => currentMode,
+      })
+
+      const { events, terminal } = await collectAll(query(baseParams({ deps })))
+
+      expect(terminal.reason).toBe('completed')
+      expect(terminal.turnCount).toBe(2)
+
+      // The mode-change message should appear in yielded events
+      const modeChangeEvents = events.filter(
+        e => e.type === 'user' && e.isMeta === true
+          && typeof e.message.content !== 'string'
+          && Array.isArray(e.message.content)
+          && e.message.content.some(
+            (b: { type: string; text?: string }) =>
+              b.type === 'text' && b.text?.includes('PLAN MODE'),
+          ),
+      )
+      expect(modeChangeEvents).toHaveLength(1)
+    })
+
+    test('injects exit-plan-mode message when mode changes from plan mid-turn', async () => {
+      let callIndex = 0
+      let currentMode: 'default' | 'plan' = 'plan'
+
+      let uuidCounter = 0
+      const uuidFn = () => `uuid-${++uuidCounter}`
+
+      const callModel: QueryDeps['callModel'] = async function* (params) {
+        callIndex++
+        if (callIndex === 1) {
+          yield createAssistantMsg(
+            [toolUseBlock('toolu_1', 'read_file', { path: 'a.ts' })],
+            'tool_use',
+          )
+        } else {
+          // Verify the exit message is present
+          const lastUserMsg = params.messages.at(-1)
+          expect(lastUserMsg?.role).toBe('user')
+          const content = lastUserMsg?.content
+          if (typeof content === 'string') {
+            expect(content).toContain('exited PLAN MODE')
+          } else if (Array.isArray(content)) {
+            const textContent = content
+              .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+              .map(b => b.text)
+              .join('')
+            expect(textContent).toContain('exited PLAN MODE')
+          }
+          yield createAssistantMsg([textBlock('OK, continuing.')])
+        }
+      }
+
+      const deps = createDeps({
+        callModel,
+        executeToolBatch: makeBatchExecutor(
+          async () => {
+            // User exits plan mode during tool execution
+            currentMode = 'default'
+            return { content: 'ok', isError: false }
+          },
+          uuidFn,
+        ),
+        uuid: uuidFn,
+        getPermissionMode: () => currentMode,
+      })
+
+      const { events, terminal } = await collectAll(query(baseParams({ deps })))
+
+      expect(terminal.reason).toBe('completed')
+
+      const exitMsgEvents = events.filter(
+        e => e.type === 'user' && e.isMeta === true
+          && typeof e.message.content !== 'string'
+          && Array.isArray(e.message.content)
+          && e.message.content.some(
+            (b: { type: string; text?: string }) =>
+              b.type === 'text' && b.text?.includes('exited PLAN MODE'),
+          ),
+      )
+      expect(exitMsgEvents).toHaveLength(1)
+    })
+
+    test('does not inject on first iteration (no previous mode to compare)', async () => {
+      const callModel: QueryDeps['callModel'] = async function* (params) {
+        // If a mode-change message were injected on the first call,
+        // params.messages would have an extra user message with system-reminder
+        const userMsgs = params.messages.filter(m => m.role === 'user')
+        for (const msg of userMsgs) {
+          const content = msg.content
+          if (typeof content === 'string') {
+            expect(content).not.toContain('PLAN MODE')
+          } else if (Array.isArray(content)) {
+            for (const block of content) {
+              if ('text' in block && typeof block.text === 'string') {
+                expect(block.text).not.toContain('PLAN MODE')
+              }
+            }
+          }
+        }
+        yield createAssistantMsg([textBlock('Done')])
+      }
+
+      const deps = createDeps({
+        callModel,
+        getPermissionMode: () => 'plan',
+      })
+
+      const { terminal } = await collectAll(query(baseParams({ deps })))
+      expect(terminal.reason).toBe('completed')
+    })
+
+    test('does not inject when mode is unchanged between iterations', async () => {
+      let callIndex = 0
+      let uuidCounter = 0
+      const uuidFn = () => `uuid-${++uuidCounter}`
+
+      const callModel: QueryDeps['callModel'] = async function* () {
+        callIndex++
+        if (callIndex === 1) {
+          yield createAssistantMsg(
+            [toolUseBlock('toolu_1', 'tool', {})],
+            'tool_use',
+          )
+        } else {
+          yield createAssistantMsg([textBlock('Done')])
+        }
+      }
+
+      const deps = createDeps({
+        callModel,
+        executeToolBatch: makeBatchExecutor(
+          async () => ({ content: 'ok', isError: false }),
+          uuidFn,
+        ),
+        uuid: uuidFn,
+        getPermissionMode: () => 'default',
+      })
+
+      const { events, terminal } = await collectAll(query(baseParams({ deps })))
+
+      expect(terminal.reason).toBe('completed')
+
+      // No mode-change messages should appear
+      const modeChangeEvents = events.filter(
+        e => e.type === 'user' && e.isMeta === true
+          && typeof e.message.content !== 'string'
+          && Array.isArray(e.message.content)
+          && e.message.content.some(
+            (b: { type: string; text?: string }) =>
+              b.type === 'text' && (b.text?.includes('PLAN MODE') || b.text?.includes('exited PLAN MODE')),
+          ),
+      )
+      expect(modeChangeEvents).toHaveLength(0)
+    })
+
+    test('is a no-op when getPermissionMode is not provided (back-compat)', async () => {
+      const callModel: QueryDeps['callModel'] = async function* () {
+        yield createAssistantMsg([textBlock('hi')])
+      }
+
+      // Explicitly omit getPermissionMode — mirror an older deps shape.
       const deps = createDeps({ callModel })
 
       const { terminal } = await collectAll(query(baseParams({ deps })))

@@ -98,6 +98,9 @@ export function createQueryDeps(options: CreateQueryDepsOptions): QueryDeps {
     },
     uuid: () => crypto.randomUUID(),
     autoCompact,
+    getPermissionMode: getPermissionContext
+      ? () => getPermissionContext().mode
+      : undefined,
   }
 }
 

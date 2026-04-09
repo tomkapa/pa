@@ -27,6 +27,7 @@ import type {
   Terminal,
   ToolUseInfo,
 } from './types.js'
+import { getModeChangeMessage } from './mode-change.js'
 
 const DEFAULT_MAX_TURNS = 10
 
@@ -79,6 +80,7 @@ export async function* queryLoop(
     messages: [...params.messages],
     turnCount: 0,
     autoCompactTracking: createInitialAutoCompactTracking(),
+    previousMode: deps.getPermissionMode?.(),
   }
 
   const interactionSpan = startInteractionSpan(lastUserText(state.messages))
@@ -149,6 +151,27 @@ export async function* queryLoop(
             { level: 'info' },
           )
         }
+      }
+
+      // Detect mid-turn permission mode changes (e.g. user presses Shift+Tab
+      // to toggle plan mode). When detected, inject a system-reminder user
+      // message so the model sees the mode switch on THIS iteration — not one
+      // iteration later after wasting a turn on blocked tools.
+      if (deps.getPermissionMode) {
+        const currentMode = deps.getPermissionMode()
+        if (state.previousMode !== undefined && currentMode !== state.previousMode) {
+          const modeChangeMsg = getModeChangeMessage(state.previousMode, currentMode)
+          if (modeChangeMsg) {
+            yield modeChangeMsg
+            state.messages.push(modeChangeMsg)
+            visibleMessages = [...visibleMessages, modeChangeMsg]
+            logForDebugging(
+              `agent: injected mode-change message (${state.previousMode} → ${currentMode})`,
+              { level: 'info' },
+            )
+          }
+        }
+        state.previousMode = currentMode
       }
 
       const messageParams: CallModelParams['messages'] = toApiMessageParams(visibleMessages)

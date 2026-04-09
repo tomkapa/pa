@@ -4,11 +4,13 @@ import type { QueryEvent, StreamEvent } from '../../types/streamEvents.js'
 import type { ProgressEvent, ToolBatchEvent, ToolUseBlock } from '../tools/execution/types.js'
 import type { AutoCompactTrackingState, CompactionResult } from './auto-compact.js'
 import type { EffortLevel } from './thinking.js'
+import type { PermissionMode } from '../permissions/types.js'
 
 export type { AutoCompactTrackingState, CompactionResult }
 
 export type { Message, UserMessage, SystemMessage, QueryEvent, ContentBlockParam, ProgressEvent }
 export type { EffortLevel }
+export type { PermissionMode }
 
 export type TerminalReason =
   | 'completed'
@@ -95,6 +97,13 @@ export interface QueryDeps {
    * when the whole run terminates.
    */
   drainQueuedInput?: () => Promise<Message[]>
+  /**
+   * Optional. Returns the current permission mode. Used by the query loop
+   * to detect mid-turn mode changes (e.g. user toggles plan mode via
+   * Shift+Tab) and inject a system-reminder message so the model learns
+   * about the mode switch on the very next API call.
+   */
+  getPermissionMode?: () => PermissionMode
 }
 
 export interface AgentQueryParams {
@@ -112,4 +121,6 @@ export interface LoopState {
   messages: Message[]
   turnCount: number
   autoCompactTracking: AutoCompactTrackingState
+  /** Tracks the permission mode from the previous iteration for mode-change detection. */
+  previousMode?: PermissionMode
 }
