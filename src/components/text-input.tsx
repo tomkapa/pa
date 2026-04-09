@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Box, Text, useInput } from '../ink.js'
 import { atMentionAtCursor } from '../services/mentions/tokenizer.js'
+import { slashCommandAtCursor } from '../commands/tokenizer.js'
+import { filterCommands } from '../commands/registry.js'
+import type { SlashCommand } from '../commands/registry.js'
 
 interface TextInputProps {
   value: string
@@ -14,11 +17,23 @@ interface TextInputProps {
    * plain text field.
    */
   suggest?: (token: string) => Promise<readonly string[]>
+  /**
+   * When provided, typing `/` at the start of the input activates a
+   * slash-command picker. The array defines all available commands.
+   */
+  commands?: readonly SlashCommand[]
 }
 
 type Suggestion =
   | { kind: 'off' }
   | { kind: 'picking'; token: string; items: readonly string[]; selectedIndex: number }
+  | { kind: 'command_picking'; token: string; items: readonly SlashCommand[]; selectedIndex: number }
+
+/** Dismiss only the given picker kind, leaving other kinds untouched. */
+function dismissPicker(kind: 'picking' | 'command_picking') {
+  return (prev: Suggestion): Suggestion =>
+    prev.kind === kind ? { kind: 'off' } : prev
+}
 
 function cursorToLineCol(lines: string[], cursor: number): { lineIndex: number; col: number } {
   let rem = cursor
@@ -37,7 +52,7 @@ function lineColToCursor(lines: string[], lineIndex: number, col: number): numbe
   return offset + col
 }
 
-export function TextInput({ value, onChange, onSubmit, isActive = true, suggest }: TextInputProps) {
+export function TextInput({ value, onChange, onSubmit, isActive = true, suggest, commands }: TextInputProps) {
   const [cursor, setCursor] = useState(value.length)
   const [suggestion, setSuggestion] = useState<Suggestion>({ kind: 'off' })
 
@@ -55,7 +70,7 @@ export function TextInput({ value, onChange, onSubmit, isActive = true, suggest 
     if (!suggest) return
     const token = atMentionAtCursor(value, cursor)
     if (token === null) {
-      setSuggestion(prev => (prev.kind === 'off' ? prev : { kind: 'off' }))
+      setSuggestion(dismissPicker('picking'))
       return
     }
     const generation = ++fetchGenerationRef.current
@@ -63,12 +78,41 @@ export function TextInput({ value, onChange, onSubmit, isActive = true, suggest 
       if (generation !== fetchGenerationRef.current) return
       // Empty results dismiss the picker so Enter still submits.
       if (items.length === 0) {
-        setSuggestion(prev => (prev.kind === 'off' ? prev : { kind: 'off' }))
+        setSuggestion(dismissPicker('picking'))
         return
       }
       setSuggestion({ kind: 'picking', token, items, selectedIndex: 0 })
     })
   }, [value, cursor, suggest])
+
+  // Commands are filtered synchronously from the static registry — no
+  // generation guard needed because there is no async operation to race.
+  useEffect(() => {
+    if (!commands || commands.length === 0) return
+    const token = slashCommandAtCursor(value, cursor)
+    if (token === null) {
+      setSuggestion(dismissPicker('command_picking'))
+      return
+    }
+    const matches = filterCommands(commands, token)
+    if (matches.length === 0) {
+      setSuggestion(dismissPicker('command_picking'))
+      return
+    }
+    setSuggestion(prev => {
+      // Preserve arrow-key selection when the filtered list hasn't changed.
+      const sameList =
+        prev.kind === 'command_picking' &&
+        prev.items.length === matches.length &&
+        prev.items.every((c, i) => c === matches[i])
+      return {
+        kind: 'command_picking',
+        token,
+        items: matches,
+        selectedIndex: sameList ? prev.selectedIndex : 0,
+      }
+    })
+  }, [value, cursor, commands])
 
   const completeMention = useCallback(
     (picked: string) => {
@@ -86,9 +130,19 @@ export function TextInput({ value, onChange, onSubmit, isActive = true, suggest 
     [value, cursor, onChange],
   )
 
+  const completeCommand = useCallback(
+    (picked: SlashCommand) => {
+      const newText = `/${picked.name} `
+      onChange(newText)
+      setCursor(newText.length)
+      setSuggestion({ kind: 'off' })
+    },
+    [onChange],
+  )
+
   const movePickerSelection = useCallback((delta: number) => {
     setSuggestion(prev => {
-      if (prev.kind !== 'picking') return prev
+      if (prev.kind === 'off') return prev
       const n = prev.items.length
       const next = (prev.selectedIndex + delta + n) % n
       return { ...prev, selectedIndex: next }
@@ -96,17 +150,21 @@ export function TextInput({ value, onChange, onSubmit, isActive = true, suggest 
   }, [])
 
   useInput((ch, key) => {
-    if (suggestion.kind === 'picking') {
+    // Unified picker keyboard handling — both mention and command pickers
+    // share the same navigation keys; only the completion action differs.
+    if (suggestion.kind === 'picking' || suggestion.kind === 'command_picking') {
       if (key.upArrow) { movePickerSelection(-1); return }
       if (key.downArrow) { movePickerSelection(1); return }
+      if (key.escape) { setSuggestion({ kind: 'off' }); return }
       if (key.return || key.tab) {
-        const picked = suggestion.items[suggestion.selectedIndex]
-        if (picked !== undefined) completeMention(picked)
+        if (suggestion.kind === 'picking') {
+          const picked = suggestion.items[suggestion.selectedIndex]
+          if (picked !== undefined) completeMention(picked)
+        } else {
+          const picked = suggestion.items[suggestion.selectedIndex]
+          if (picked !== undefined) completeCommand(picked)
+        }
         // Swallow Enter regardless so an open picker never submits the prompt.
-        return
-      }
-      if (key.escape) {
-        setSuggestion({ kind: 'off' })
         return
       }
     }
@@ -200,20 +258,33 @@ export function TextInput({ value, onChange, onSubmit, isActive = true, suggest 
           )}
         </Box>
       ))}
-      {suggestion.kind === 'picking' && suggestion.items.length > 0 && (
-        <Box flexDirection="column">
-          {suggestion.items.map((item, i) => (
-            <Text
-              key={item}
-              color={i === suggestion.selectedIndex ? 'cyan' : undefined}
-              inverse={i === suggestion.selectedIndex}
-            >
-              {i === suggestion.selectedIndex ? '> ' : '  '}
-              {item}
-            </Text>
-          ))}
-        </Box>
-      )}
+      {(suggestion.kind === 'picking' || suggestion.kind === 'command_picking') &&
+        suggestion.items.length > 0 && (
+          <Box flexDirection="column">
+            {suggestion.items.map((item, i) => {
+              const label = suggestion.kind === 'picking'
+                ? (item as string)
+                : `/${(item as SlashCommand).name}`
+              const desc = suggestion.kind === 'command_picking'
+                ? (item as SlashCommand).description
+                : undefined
+              const itemKey = suggestion.kind === 'picking'
+                ? (item as string)
+                : (item as SlashCommand).name
+              return (
+                <Text
+                  key={itemKey}
+                  color={i === suggestion.selectedIndex ? 'cyan' : undefined}
+                  inverse={i === suggestion.selectedIndex}
+                >
+                  {i === suggestion.selectedIndex ? '> ' : '  '}
+                  {label}
+                  {desc && <Text color="gray">{`  ${desc}`}</Text>}
+                </Text>
+              )
+            })}
+          </Box>
+        )}
     </Box>
   )
 }

@@ -27,16 +27,12 @@ import { buildMessagesForUserTurn } from './services/mentions/message-builder.js
 import { scanFiles } from './services/mentions/scanner.js'
 import { filterForToken } from './services/mentions/filter.js'
 import {
-  getMessagesAfterCompactBoundary,
   isToolResultBlock,
 } from './services/messages/predicates.js'
 import { query } from './services/agent/query.js'
 import { createQueryDeps } from './services/agent/deps.js'
 import {
-  buildPostCompactMessages,
-  compactConversation,
   createAnthropicSummarizer,
-  getTokenCountFromLastResponse,
 } from './services/agent/auto-compact.js'
 import type { SummarizeFn } from './services/agent/auto-compact.js'
 import { createAnthropicClient } from './services/api/client.js'
@@ -62,6 +58,7 @@ import {
 } from './services/system-prompt/index.js'
 import { cursorDefault, cursorIBeam } from '../ink/termio/csi.js'
 import type { SessionWriter } from './services/session/index.js'
+import { SLASH_COMMANDS, findCommand } from './commands/registry.js'
 
 const MODEL = 'claude-sonnet-4-20250514'
 const MAX_TOKENS = 8096
@@ -437,29 +434,22 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
 
     try {
       // Slash commands run client-side without invoking the model loop.
-      // `/compact [instructions]` triggers manual compaction.
-      if (value.startsWith('/compact')) {
-        const customInstructions = value.slice('/compact'.length).trim()
-        if (!replDeps.summarize) {
-          throw new Error('/compact: no summarizer configured')
-        }
-        const visible = getMessagesAfterCompactBoundary(messagesRef.current)
-        if (visible.length === 0) {
-          addSystemMessage('compact_skipped', 'Nothing to compact yet.', 'info')
+      // Handlers are defined in commands/registry.ts — single source of truth.
+      const slashMatch = value.match(/^\/(\S+)/)
+      if (slashMatch) {
+        const cmd = findCommand(slashMatch[1]!)
+        if (cmd) {
+          await cmd.execute({
+            args: value.slice(slashMatch[0]!.length).trim(),
+            abortSignal: abortController.signal,
+            messages: () => messagesRef.current,
+            addSystemMessage,
+            persistMessage,
+            setMessages,
+            summarize: replDeps.summarize,
+          })
           return
         }
-        const result = await compactConversation({
-          messages: visible,
-          summarize: replDeps.summarize,
-          trigger: 'manual',
-          customInstructions: customInstructions.length > 0 ? customInstructions : undefined,
-          abortSignal: abortController.signal,
-          preCompactTokenCount: getTokenCountFromLastResponse(visible),
-        })
-        const postCompact = buildPostCompactMessages(result)
-        for (const m of postCompact) persistMessage(m)
-        setMessages(prev => [...prev, ...postCompact])
-        return
       }
 
       // Expands @-file mentions into a synthesized Read tool trace before the
@@ -640,6 +630,7 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
           onSubmit={handleSubmit}
           isActive={!activeConfirm}
           suggest={suggestMentions}
+          commands={SLASH_COMMANDS}
         />
       </Box>
     </Box>
