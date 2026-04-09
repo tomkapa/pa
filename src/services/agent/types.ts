@@ -82,6 +82,19 @@ export interface QueryDeps {
    * with them for the next API call.
    */
   autoCompact?: AutoCompactFn
+  /**
+   * Optional. When present, the query loop calls this at the top of each
+   * iteration — after the auto-compact check, before the next callModel —
+   * to pick up any user messages that have been buffered since the turn
+   * started (e.g. the REPL's command queue). Returned messages are yielded
+   * as events AND pushed into the loop's in-memory message slice so the
+   * next API call sees them. Returning `[]` means "nothing queued, carry on."
+   *
+   * This is the "between-iterations drain" path — the queue empties at the
+   * next natural pause point inside a long multi-tool agent run, not only
+   * when the whole run terminates.
+   */
+  drainQueuedInput?: () => Promise<Message[]>
 }
 
 export interface AgentQueryParams {

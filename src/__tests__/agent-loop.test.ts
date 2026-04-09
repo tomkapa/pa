@@ -128,6 +128,7 @@ function createDeps(overrides: Partial<QueryDeps> = {}): QueryDeps {
     uuid: uuidFn,
   }
   if (overrides.autoCompact) deps.autoCompact = overrides.autoCompact
+  if (overrides.drainQueuedInput) deps.drainQueuedInput = overrides.drainQueuedInput
   return deps
 }
 
@@ -945,6 +946,109 @@ describe('agent loop', () => {
         const params = call[0] as CallModelParams
         expect(params.effort).toBe('medium')
       }
+    })
+  })
+
+  // ── Queued-input drain (between-iterations) ──────────────────────
+
+  describe('drainQueuedInput', () => {
+    test('drains the queue between iterations and includes messages in the next callModel', async () => {
+      // Simulate a queue with one pending message. The hook returns it on
+      // the SECOND invocation (iteration 2, after tool execution), and
+      // empty on any further invocation.
+      const queuedMessage = createUserMessage({ content: 'actually, use postgres' })
+      let drainCallCount = 0
+      const drainQueuedInput = mock(async () => {
+        drainCallCount++
+        if (drainCallCount === 2) return [queuedMessage]
+        return []
+      })
+
+      const capturedCalls: CallModelParams[] = []
+      const callModel: QueryDeps['callModel'] = async function* (params) {
+        capturedCalls.push(params)
+        if (capturedCalls.length === 1) {
+          yield createAssistantMsg(
+            [toolUseBlock('toolu_1', 'tool', {})],
+            'tool_use',
+          )
+        } else {
+          yield createAssistantMsg([textBlock('Switching to postgres.')])
+        }
+      }
+
+      let uuidCounter = 0
+      const uuidFn = () => `uuid-${++uuidCounter}`
+      const deps = createDeps({
+        callModel,
+        executeToolBatch: makeBatchExecutor(
+          async () => ({ content: 'did a thing', isError: false }),
+          uuidFn,
+        ),
+        uuid: uuidFn,
+        drainQueuedInput,
+      })
+
+      const initialUser = createUserMessage({ content: 'build a sqlite app' })
+      const { events, terminal } = await collectAll(
+        query(baseParams({ deps, messages: [initialUser] })),
+      )
+
+      expect(terminal.reason).toBe('completed')
+
+      // The queued user message must appear in the yielded event stream so
+      // the REPL's onQueryEvent can persist it and render it.
+      const userTextEvents = events.filter(
+        (e): e is typeof queuedMessage =>
+          e.type === 'user' &&
+          !(e as UserMessage).isMeta &&
+          e.uuid === queuedMessage.uuid,
+      )
+      expect(userTextEvents).toHaveLength(1)
+
+      // The SECOND callModel invocation must see the queued message inside
+      // its message slice — that's the whole point of the in-loop drain.
+      expect(capturedCalls.length).toBe(2)
+      const secondCallMessages = capturedCalls[1]!.messages
+      const secondCallUserTexts = secondCallMessages.filter(m => {
+        if (m.role !== 'user') return false
+        if (typeof m.content === 'string') return m.content === 'actually, use postgres'
+        return m.content.some(
+          b => b.type === 'text' && b.text === 'actually, use postgres',
+        )
+      })
+      expect(secondCallUserTexts).toHaveLength(1)
+    })
+
+    test('does nothing when the drain hook returns an empty array', async () => {
+      const drainQueuedInput = mock(async () => [])
+
+      const deps = createDeps({
+        callModel: sequentialCallModel([createAssistantMsg([textBlock('done')])]),
+        drainQueuedInput,
+      })
+
+      const { events, terminal } = await collectAll(query(baseParams({ deps })))
+
+      expect(terminal.reason).toBe('completed')
+      expect(drainQueuedInput).toHaveBeenCalled()
+      // No extra user events beyond any the base query produced
+      const textUserEvents = events.filter(
+        e => e.type === 'user' && !(e as UserMessage).isMeta,
+      )
+      expect(textUserEvents).toHaveLength(0)
+    })
+
+    test('is a no-op when deps.drainQueuedInput is not provided (back-compat)', async () => {
+      const callModel: QueryDeps['callModel'] = async function* () {
+        yield createAssistantMsg([textBlock('hi')])
+      }
+
+      // Explicitly omit drainQueuedInput — mirror an older deps shape.
+      const deps = createDeps({ callModel })
+
+      const { terminal } = await collectAll(query(baseParams({ deps })))
+      expect(terminal.reason).toBe('completed')
     })
   })
 })

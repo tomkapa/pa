@@ -130,6 +130,27 @@ export async function* queryLoop(
         }
       }
 
+      // Drain any messages the user buffered during the previous iteration
+      // (typically while tool execution was running). These become a fresh
+      // user turn in the next API call — the agent picks them up at the
+      // natural pause between iterations instead of having to wait for the
+      // whole run to terminate. Iteration 1 typically sees an empty queue
+      // because the initial submission went straight into state.messages.
+      if (deps.drainQueuedInput) {
+        const drained = await deps.drainQueuedInput()
+        if (drained.length > 0) {
+          for (const msg of drained) {
+            yield msg
+            state.messages.push(msg)
+            visibleMessages = [...visibleMessages, msg]
+          }
+          logForDebugging(
+            `agent: drained ${drained.length} queued user message(s) between iterations`,
+            { level: 'info' },
+          )
+        }
+      }
+
       const messageParams: CallModelParams['messages'] = toApiMessageParams(visibleMessages)
       const effort = effortFromLastHumanTurn(visibleMessages)
 

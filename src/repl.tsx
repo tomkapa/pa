@@ -1,10 +1,24 @@
-import { useState, useCallback, useRef, useMemo, useEffect } from 'react'
+import { useState, useCallback, useRef, useMemo, useEffect, useSyncExternalStore } from 'react'
 import { Box, Text, useInput, useApp } from './ink.js'
 import { TextInput } from './components/text-input.js'
 import { ModeIndicator } from './components/mode-indicator.js'
 import { PermissionRequest } from './components/permission-dialog.js'
 import { AssistantToolUseBlock, ToolUseProgressBlock, UserToolResultBlock } from './components/tool-messages.js'
 import { ThinkingBlock } from './components/thinking-block.js'
+import { QueuedCommandsPreview } from './components/queued-commands-preview.js'
+import {
+  enqueueCommand,
+  drainAllCommands,
+  clearCommandQueue,
+  hasQueuedCommands,
+  getQueueSnapshot,
+  subscribeToCommandQueue,
+} from './utils/messageQueue.js'
+import {
+  isAgentBusy,
+  setAgentBusy,
+  subscribeToAgentBusy,
+} from './utils/agentBusy.js'
 import type { Message } from './types/message.js'
 import type { AgentEvent, QueryDeps } from './services/agent/types.js'
 import type { ProgressMessage } from './services/tools/types.js'
@@ -302,11 +316,9 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
   const [messages, setMessages] = useState<Message[]>(
     () => session?.initialMessages ?? [],
   )
-  const [isLoading, setIsLoading] = useState(false)
   const [latestProgressByToolUseId, setLatestProgressByToolUseId] = useState<Map<string, ProgressMessage>>(
     () => new Map(),
   )
-  const isLoadingRef = useRef(false)
   const abortControllerRef = useRef<AbortController | null>(null)
   const messagesRef = useRef<Message[]>(messages)
   messagesRef.current = messages
@@ -407,19 +419,27 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
     // stream_event: ignored for now (streaming display is a future enhancement)
   }, [persistMessage])
 
-  const handleSubmit = useCallback(async (value: string) => {
-    if (!value.trim() || isLoadingRef.current) return
+  // ---------------------------------------------------------------------------
+  // runTurn — the single place that actually runs an agent turn.
+  //
+  // Both the direct submit-handler path (when the agent was idle) and the
+  // drain effect (when the agent just finished a turn and the queue is
+  // non-empty) funnel through here so there is exactly one agent-execution
+  // path. runTurn synchronously flips setAgentBusy(true) BEFORE the first
+  // await — that is the race guard that prevents a second drain effect from
+  // double-dequeuing while this one is awaiting.
+  // ---------------------------------------------------------------------------
+  const runTurn = useCallback(async (value: string) => {
+    // Synchronous, BEFORE any await — see the comment above.
+    setAgentBusy(true)
+    const abortController = new AbortController()
+    abortControllerRef.current = abortController
 
-    // Slash commands run client-side without invoking the model loop.
-    // `/compact [instructions]` triggers manual compaction.
-    if (value.trim().startsWith('/compact')) {
-      const customInstructions = value.trim().slice('/compact'.length).trim()
-      setInput('')
-      isLoadingRef.current = true
-      setIsLoading(true)
-      const abortController = new AbortController()
-      abortControllerRef.current = abortController
-      try {
+    try {
+      // Slash commands run client-side without invoking the model loop.
+      // `/compact [instructions]` triggers manual compaction.
+      if (value.startsWith('/compact')) {
+        const customInstructions = value.slice('/compact'.length).trim()
         if (!replDeps.summarize) {
           throw new Error('/compact: no summarizer configured')
         }
@@ -439,35 +459,21 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
         const postCompact = buildPostCompactMessages(result)
         for (const m of postCompact) persistMessage(m)
         setMessages(prev => [...prev, ...postCompact])
-      } catch (error: unknown) {
-        addSystemMessage('compact_error', `/compact failed: ${getErrorMessage(error)}`, 'error')
-      } finally {
-        isLoadingRef.current = false
-        setIsLoading(false)
-        abortControllerRef.current = null
+        return
       }
-      return
-    }
 
-    // Expands @-file mentions into a synthesized Read tool trace before the
-    // user's literal text. Prompts without mentions return a single message.
-    const turnMessages = await buildMessagesForUserTurn({
-      promptText: value,
-      cwd: process.cwd(),
-    })
-    for (const msg of turnMessages) persistMessage(msg)
-    const updatedMessages = [...messagesRef.current, ...turnMessages]
-    setMessages(updatedMessages)
-    setLatestProgressByToolUseId(new Map())
-    setInput('')
+      // Expands @-file mentions into a synthesized Read tool trace before the
+      // user's literal text. Prompts without mentions return a single message.
+      const turnMessages = await buildMessagesForUserTurn({
+        promptText: value,
+        cwd: process.cwd(),
+      })
+      for (const msg of turnMessages) persistMessage(msg)
+      const updatedMessages = [...messagesRef.current, ...turnMessages]
+      setMessages(updatedMessages)
+      setLatestProgressByToolUseId(new Map())
 
-    const abortController = new AbortController()
-    abortControllerRef.current = abortController
-    isLoadingRef.current = true
-    setIsLoading(true)
-
-    try {
-      const [deps, systemPrompt] = await Promise.all([
+      const [baseDeps, systemPrompt] = await Promise.all([
         Promise.resolve(
           replDeps.createQueryDeps(
             abortController,
@@ -477,6 +483,23 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
         ),
         buildPromptForSubmit(replDeps.tools),
       ])
+
+      // Between-iterations drain: picks up messages the user buffered
+      // during the previous tool batch and folds them into the next API
+      // call as a fresh user turn. onQueryEvent persists and renders each
+      // yielded message, so we don't need to persist here.
+      const deps = {
+        ...baseDeps,
+        drainQueuedInput: async (): Promise<Message[]> => {
+          if (!hasQueuedCommands()) return []
+          const drained = drainAllCommands()
+          const combinedText = drained.map(c => c.value).join('\n\n')
+          return buildMessagesForUserTurn({
+            promptText: combinedText,
+            cwd: process.cwd(),
+          })
+        },
+      }
 
       for await (const event of query({
         messages: updatedMessages,
@@ -489,19 +512,76 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
     } catch (error: unknown) {
       addSystemMessage('repl_error', getErrorMessage(error), 'error')
     } finally {
-      isLoadingRef.current = false
-      setIsLoading(false)
       abortControllerRef.current = null
       // Drop any progress entries left over from in-flight tools (abort, error,
       // or a tool whose result never reached us). Otherwise stale "(running …)"
       // UI sticks around until the next submit.
       setLatestProgressByToolUseId(prev => (prev.size === 0 ? prev : new Map()))
+      // Clear busy LAST — the drain effect subscribes to this signal and will
+      // fire as soon as it flips, so everything else must already be in its
+      // post-turn state.
+      setAgentBusy(false)
     }
   }, [replDeps, onQueryEvent, pushConfirm, persistMessage, addSystemMessage])
 
+  const handleSubmit = useCallback(async (value: string) => {
+    const trimmed = value.trim()
+    if (trimmed === '') return
+
+    // Agent mid-turn → buffer the message and clear the input so the user
+    // can keep typing. The drain effect picks it up when the current turn
+    // finishes. isAgentBusy() is a synchronous module-level read — it is the
+    // only correct way to make this decision, because React state is one
+    // render behind and would race under rapid submits.
+    if (isAgentBusy()) {
+      enqueueCommand({
+        value: trimmed,
+        uuid: crypto.randomUUID(),
+        mode: 'prompt',
+      })
+      setInput('')
+      return
+    }
+
+    setInput('')
+    await runTurn(trimmed)
+  }, [runTurn])
+
+  // ---------------------------------------------------------------------------
+  // Drain effect — when the agent goes idle and the queue has items, batch
+  // them into one combined turn and run it. Subscribing to both queue and
+  // busy state via useSyncExternalStore ensures this re-runs whenever either
+  // changes.
+  // ---------------------------------------------------------------------------
+  const queuedCommands = useSyncExternalStore(subscribeToCommandQueue, getQueueSnapshot)
+  const agentBusy = useSyncExternalStore(subscribeToAgentBusy, isAgentBusy)
+
+  useEffect(() => {
+    if (agentBusy) return
+    if (queuedCommands.length === 0) return
+
+    const drained = drainAllCommands()
+    // Batch all queued submissions into one user turn — users typing 3
+    // thoughts in a row want the agent to address all 3 together, not
+    // bounce back to thought 1 in isolation for 3 sequential round-trips.
+    // runTurn sync-sets busy=true as its first statement (before any
+    // await), which is the race guard that prevents a second drain effect
+    // firing in the same microtask from double-dequeuing.
+    const combinedText = drained.map(c => c.value).join('\n\n')
+    void runTurn(combinedText)
+  }, [agentBusy, queuedCommands, runTurn])
+
   useInput((_ch, key) => {
-    if (key.escape && abortControllerRef.current) {
-      abortControllerRef.current.abort()
+    if (key.escape) {
+      // Esc with queued items → clear the queue (takes precedence over
+      // abort so the user can cancel a buffered follow-up without also
+      // killing the in-flight turn). Esc with an empty queue keeps the
+      // existing "abort current turn" behavior.
+      if (hasQueuedCommands()) {
+        clearCommandQueue()
+      } else if (abortControllerRef.current) {
+        abortControllerRef.current.abort()
+      }
     }
     if (key.ctrl && _ch === 'd') exit()
 
@@ -540,13 +620,14 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
           inProgressToolCount={latestProgressByToolUseId.size}
         />
       ))}
-      {isLoading && <Text color="yellow">Thinking...</Text>}
+      {agentBusy && <Text color="yellow">Thinking...</Text>}
       {activeConfirm && (
         <PermissionRequest
           confirm={activeConfirm}
           onDone={shiftConfirm}
         />
       )}
+      <QueuedCommandsPreview />
       <ModeIndicator mode={permissionContext.mode} />
       <Box
         onMouseEnter={() => process.stdout.write(CURSOR_IBEAM)}
