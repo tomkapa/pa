@@ -4,6 +4,7 @@ import { createUserMessage } from '../../messages/factory.js'
 import { getErrorMessage } from '../../../utils/error.js'
 import { isEmptyContent, maybeTruncateLargeResult } from './result-size.js'
 import { Stream } from './stream.js'
+import { executePreToolHooks, executePostToolHooks } from '../../hooks/index.js'
 import type {
   ToolUseBlock,
   CanUseToolFn,
@@ -67,7 +68,36 @@ export async function* runToolUse(
     }
   }
 
-  const permission = await canUseTool(tool, validatedInput, context)
+  // --- PreToolUse hooks ---
+  let hookModifiedInput = validatedInput
+  for await (const hookResult of executePreToolHooks(
+    toolName,
+    toolUseID,
+    validatedInput,
+    context.abortController.signal,
+  )) {
+    if (hookResult.blockingError) {
+      yield makeErrorResult(
+        toolUseID,
+        `Blocked by hook (${hookResult.blockingError.command}): ${hookResult.blockingError.message}`,
+        assistantMessageUUID,
+      )
+      return
+    }
+    if (hookResult.permissionBehavior === 'deny') {
+      yield makeErrorResult(
+        toolUseID,
+        `Denied by hook: ${hookResult.hookPermissionDecisionReason ?? 'hook policy'}`,
+        assistantMessageUUID,
+      )
+      return
+    }
+    if (hookResult.updatedInput) {
+      hookModifiedInput = hookResult.updatedInput
+    }
+  }
+
+  const permission = await canUseTool(tool, hookModifiedInput, context)
   if (permission.behavior === 'deny') {
     yield makeErrorResult(toolUseID, permission.message, assistantMessageUUID)
     return
@@ -135,6 +165,24 @@ export async function* runToolUse(
   }
 
   resultBlock = maybeTruncateLargeResult(resultBlock, toolName, tool.maxResultSizeChars)
+
+  // --- PostToolUse hooks ---
+  for await (const hookResult of executePostToolHooks(
+    toolName,
+    toolUseID,
+    hookModifiedInput,
+    toolResult.data,
+    context.abortController.signal,
+  )) {
+    if (hookResult.blockingError) {
+      yield makeErrorResult(
+        toolUseID,
+        `Post-tool hook error (${hookResult.blockingError.command}): ${hookResult.blockingError.message}`,
+        assistantMessageUUID,
+      )
+      return
+    }
+  }
 
   const contextModifiers: ContextModifier[] = []
   if (toolResult.contextModifier) {

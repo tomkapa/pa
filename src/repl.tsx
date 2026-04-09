@@ -62,6 +62,7 @@ import {
 import { cursorDefault, cursorIBeam } from '../ink/termio/csi.js'
 import type { SessionWriter } from './services/session/index.js'
 import { SLASH_COMMANDS, findCommand } from './commands/registry.js'
+import { executeSessionStartHooks, executeUserPromptSubmitHooks } from './services/hooks/index.js'
 
 const MODEL = 'claude-sonnet-4-20250514'
 const MAX_TOKENS = 8096
@@ -482,6 +483,26 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
         }
       }
 
+      // --- UserPromptSubmit hooks ---
+      for await (const hookResult of executeUserPromptSubmitHooks(
+        value,
+        abortController.signal,
+      )) {
+        if (hookResult.blockingError) {
+          addSystemMessage(
+            'hook_prompt_blocked',
+            `Prompt blocked by hook: ${hookResult.blockingError.message}`,
+            'warning',
+          )
+          return
+        }
+        if (hookResult.additionalContexts) {
+          for (const ctx of hookResult.additionalContexts) {
+            addSystemMessage('hook_prompt_context', ctx, 'info')
+          }
+        }
+      }
+
       // Expands @-file mentions into a synthesized Read tool trace before the
       // user's literal text. Prompts without mentions return a single message.
       const turnMessages = await buildMessagesForUserTurn({
@@ -617,6 +638,27 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
   const suggestMentions = useCallback(async (token: string) => {
     const files = await scanFiles(process.cwd(), MENTION_SCAN_MAX_FILES)
     return filterForToken(files, token, MENTION_PICKER_LIMIT)
+  }, [])
+
+  // --- SessionStart hooks ---
+  // Fire once on mount. Fresh session → 'startup', resumed → 'resume'.
+  useEffect(() => {
+    const source = session?.initialMessages?.length ? 'resume' : 'startup'
+    void (async () => {
+      try {
+        for await (const hookResult of executeSessionStartHooks(source)) {
+          if (hookResult.additionalContexts) {
+            for (const ctx of hookResult.additionalContexts) {
+              addSystemMessage('hook_session_start', ctx, 'info')
+            }
+          }
+          // Blocking errors are ignored for SessionStart — session must start
+        }
+      } catch {
+        // SessionStart hooks must not prevent startup
+      }
+    })()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
