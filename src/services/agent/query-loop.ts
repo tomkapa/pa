@@ -29,7 +29,7 @@ import type {
 } from './types.js'
 import { getModeChangeMessage } from './mode-change.js'
 
-const DEFAULT_MAX_TURNS = 10
+const DEFAULT_MAX_TURNS = 100
 
 function extractToolUseBlocks(content: ContentBlock[]): ToolUseInfo[] {
   return content

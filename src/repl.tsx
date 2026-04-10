@@ -69,7 +69,9 @@ import {
 import { cursorDefault, cursorIBeam } from '../ink/termio/csi.js'
 import type { SessionWriter } from './services/session/index.js'
 import { SLASH_COMMANDS, findCommand } from './commands/registry.js'
+import type { SlashCommand } from './commands/registry.js'
 import { executeSessionStartHooks, executeUserPromptSubmitHooks } from './services/hooks/index.js'
+import { CustomCommandRegistry, discoverCommandDirectories } from './services/custom-commands/index.js'
 
 const MODEL = 'claude-sonnet-4-20250514'
 const MAX_TOKENS = 8096
@@ -252,6 +254,13 @@ function MessageView({
 // Deps factory — injectable for testing
 // ---------------------------------------------------------------------------
 
+export interface CreateQueryDepsOverrides {
+  /** Override the tools available to the model for this turn. */
+  tools?: Tool<unknown, unknown>[]
+  /** Override the model for this turn (e.g. "haiku", "opus"). */
+  model?: string
+}
+
 export interface REPLDeps {
   tools: Tool<unknown, unknown>[]
   initialPermissionContext: ToolPermissionContext
@@ -263,6 +272,7 @@ export interface REPLDeps {
     setPermissionContext?: (
       updater: (ctx: ToolPermissionContext) => ToolPermissionContext,
     ) => void,
+    overrides?: CreateQueryDepsOverrides,
   ) => QueryDeps
   /**
    * Optional summarizer used by the manual `/compact` slash command.
@@ -340,12 +350,13 @@ function createDefaultREPLDeps(): REPLDeps {
       setPermissionContext?: (
         updater: (ctx: ToolPermissionContext) => ToolPermissionContext,
       ) => void,
+      overrides?: CreateQueryDepsOverrides,
     ) =>
       createQueryDeps({
         client,
-        model: MODEL,
+        model: overrides?.model ?? MODEL,
         maxTokens: MAX_TOKENS,
-        tools,
+        tools: overrides?.tools ?? tools,
         abortController,
         permissionContext,
         pushConfirm,
@@ -388,6 +399,25 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
     () => injectedDeps ?? createDefaultREPLDeps(),
     [injectedDeps],
   )
+
+  // Custom slash commands discovered from ~/.pa/commands/ and .pa/commands/
+  const customCommandRegistryRef = useRef(new CustomCommandRegistry())
+  const [allSlashCommands, setAllSlashCommands] = useState<readonly SlashCommand[]>(SLASH_COMMANDS)
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const dirs = await discoverCommandDirectories(process.cwd())
+        await customCommandRegistryRef.current.loadFromDirectories(dirs)
+        const customSlash = customCommandRegistryRef.current.toSlashCommands()
+        if (customSlash.length > 0) {
+          setAllSlashCommands([...SLASH_COMMANDS, ...customSlash].sort((a, b) => a.name.localeCompare(b.name)))
+        }
+      } catch {
+        // Custom command loading must not prevent startup
+      }
+    })()
+  }, [])
 
   // Messages already persisted to disk are seeded into the set so we don't
   // re-write history we just read back. Also guards against
@@ -499,8 +529,13 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
     try {
       // Slash commands run client-side without invoking the model loop.
       // Handlers are defined in commands/registry.ts — single source of truth.
+      // Custom commands from .pa/commands/ are handled differently — they
+      // expand into a user message and trigger an agent turn.
+      let effectiveValue = value
+      let customCommandMeta: { allowedTools?: string[]; model?: string } | undefined
       const slashMatch = value.match(/^\/(\S+)/)
       if (slashMatch) {
+        // Check built-in commands first
         const cmd = findCommand(slashMatch[1]!)
         if (cmd) {
           await cmd.execute({
@@ -514,11 +549,24 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
           })
           return
         }
+
+        // Check custom commands — expand and fall through to agent execution
+        const customCmd = customCommandRegistryRef.current.findCommand(slashMatch[1]!)
+        if (customCmd) {
+          const args = value.slice(slashMatch[0]!.length).trim()
+          effectiveValue = await customCmd.getPrompt(args)
+          if (customCmd.allowedTools || customCmd.model) {
+            customCommandMeta = {
+              allowedTools: customCmd.allowedTools,
+              model: customCmd.model,
+            }
+          }
+        }
       }
 
       // --- UserPromptSubmit hooks ---
       for await (const hookResult of executeUserPromptSubmitHooks(
-        value,
+        effectiveValue,
         abortController.signal,
       )) {
         if (hookResult.blockingError) {
@@ -539,13 +587,26 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
       // Expands @-file mentions into a synthesized Read tool trace before the
       // user's literal text. Prompts without mentions return a single message.
       const turnMessages = await buildMessagesForUserTurn({
-        promptText: value,
+        promptText: effectiveValue,
         cwd: process.cwd(),
       })
       for (const msg of turnMessages) persistMessage(msg)
       const updatedMessages = [...messagesRef.current, ...turnMessages]
       setMessages(updatedMessages)
       setLatestProgressByToolUseId(new Map())
+
+      // When a custom command specifies allowed-tools, restrict the tool set
+      // for this turn so the model only sees (and can invoke) those tools.
+      const effectiveTools = customCommandMeta?.allowedTools
+        ? replDeps.tools.filter(t => customCommandMeta!.allowedTools!.some(
+            name => t.name.toLowerCase() === name.toLowerCase(),
+          ))
+        : replDeps.tools
+
+      const queryDepsOverrides: CreateQueryDepsOverrides | undefined = customCommandMeta && {
+        ...(customCommandMeta.allowedTools && { tools: effectiveTools }),
+        ...(customCommandMeta.model && { model: customCommandMeta.model }),
+      }
 
       const [baseDeps, systemPrompt] = await Promise.all([
         Promise.resolve(
@@ -555,9 +616,10 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
             pushConfirm,
             () => permissionContextRef.current,
             (updater) => setPermissionContext(updater),
+            queryDepsOverrides,
           ),
         ),
-        buildPromptForSubmit(replDeps.tools, permissionContextRef.current),
+        buildPromptForSubmit(effectiveTools, permissionContextRef.current),
       ])
 
       // Between-iterations drain: picks up messages the user buffered
@@ -738,7 +800,7 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
           onSubmit={handleSubmit}
           isActive={!activeConfirm}
           suggest={suggestMentions}
-          commands={SLASH_COMMANDS}
+          commands={allSlashCommands}
         />
       </Box>
     </Box>
