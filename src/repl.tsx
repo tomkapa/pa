@@ -45,11 +45,13 @@ import { grepToolDef } from './tools/grepTool.js'
 import { bashToolDef } from './tools/bashTool.js'
 import { enterPlanModeToolDef } from './tools/enterPlanModeTool.js'
 import { exitPlanModeToolDef } from './tools/exitPlanModeTool.js'
+import { agentToolDef } from './tools/agentTool.js'
 import { FileStateCache } from './utils/fileStateCache.js'
 import type { Tool } from './services/tools/types.js'
 import { loadAllMcpTools } from './services/mcp/index.js'
 import { getErrorMessage } from './utils/error.js'
 import { initializeToolPermissionContext } from './services/permissions/initialize.js'
+import { createPermissionContext } from './services/permissions/context.js'
 import { cyclePermissionMode } from './services/permissions/mode-cycling.js'
 import type { ToolUseConfirm } from './services/permissions/confirm.js'
 import type { ToolPermissionContext } from './services/permissions/types.js'
@@ -275,10 +277,31 @@ function createDefaultREPLDeps(): REPLDeps {
   const bashTool = buildTool(bashToolDef())
   const enterPlanModeTool = buildTool(enterPlanModeToolDef())
   const exitPlanModeTool = buildTool(exitPlanModeToolDef())
-  const tools: Tool<unknown, unknown>[] = [
+
+  // The tools array is captured by reference. The agentTool's closure reads
+  // it at call time, so late-arriving MCP tools are included automatically.
+  const tools: Tool<unknown, unknown>[] = []
+
+  const agentTool = buildTool(agentToolDef({
+    tools,
+    createChildQueryDeps: (opts) =>
+      createQueryDeps({
+        client,
+        model: MODEL,
+        maxTokens: MAX_TOKENS,
+        tools: opts.tools,
+        abortController: opts.abortController,
+        permissionContext: createPermissionContext({
+          mode: 'bypassPermissions',
+          isBypassPermissionsModeAvailable: true,
+        }),
+      }),
+  }))
+
+  tools.push(
     readTool, writeTool, editTool, globTool, grepTool, bashTool,
-    enterPlanModeTool, exitPlanModeTool,
-  ]
+    enterPlanModeTool, exitPlanModeTool, agentTool,
+  )
 
   // Start loading MCP tools in the background. The tools array is mutated
   // in-place so all closures that captured it see the new tools. By the time
