@@ -8,6 +8,10 @@ import { isFilesystemCommand } from './safety.js'
 import { checkBashCommandSecurity, matchBashAllowRules } from './command-security.js'
 import { isSessionPlanFile } from '../plans/index.js'
 import { expandPath } from '../../utils/expandPath.js'
+import {
+  extractToolPaths,
+  checkReadOnlyPath,
+} from './path-validation.js'
 
 /**
  * The permission pipeline — decides whether a tool can execute.
@@ -19,9 +23,10 @@ import { expandPath } from '../../utils/expandPath.js'
  * 4. acceptEdits mode → auto-allow file ops and filesystem commands
  * 5. bypassPermissions mode → auto-allow everything remaining
  * 6. plan mode → allow reads, deny writes
- * 7. Allow rules → auto-allow
- * 8. Tool's non-bypass-immune ask (if any) → surface now
- * 9. Default → ask
+ * 7. Read-only auto-allow → auto-approve read-only tools within CWD
+ * 8. Allow rules → auto-allow
+ * 9. Tool's non-bypass-immune ask (if any) → surface now
+ * 10. Default → ask
  */
 export async function hasPermissionsToUseTool(
   tool: Tool<unknown, unknown>,
@@ -174,7 +179,54 @@ export async function hasPermissionsToUseTool(
     }
   }
 
-  // 7. Allow rules
+  // 7. Read-only auto-allow — auto-approve read-only tools within CWD,
+  //    but prompt for dangerous paths, sensitive files, or paths outside CWD.
+  if (tool.isReadOnly(input)) {
+    const paths = extractToolPaths(input)
+
+    if (paths.length === 0) {
+      return {
+        behavior: 'allow',
+        reason: { type: 'toolSpecific', description: 'Read-only tool with no filesystem paths' },
+        updatedInput: input,
+      }
+    }
+
+    // Single pass: dangerous → sensitive → CWD boundary (defense-in-depth order)
+    let allWithinCwd = true
+    for (const rawPath of paths) {
+      const check = checkReadOnlyPath(rawPath, cwd)
+      if (check?.type === 'dangerous') {
+        return {
+          behavior: 'ask',
+          reason: { type: 'safetyCheck', description: check.reason },
+          message: `${toolName} targets a potentially dangerous path: ${check.reason}`,
+        }
+      }
+      if (check?.type === 'sensitive') {
+        return {
+          behavior: 'ask',
+          reason: { type: 'safetyCheck', description: 'Sensitive file path' },
+          message: `${toolName} targets a sensitive file. Allow?`,
+        }
+      }
+      if (check?.type === 'outside-cwd') {
+        allWithinCwd = false
+      }
+    }
+
+    if (allWithinCwd) {
+      return {
+        behavior: 'allow',
+        reason: { type: 'toolSpecific', description: 'Read-only tool within project directory' },
+        updatedInput: input,
+      }
+    }
+
+    // Outside CWD — fall through to allow rules / default ask
+  }
+
+  // 8. Allow rules
   // For Bash: compound-aware matching with prefix word boundaries
   if (isBashTool && typeof toolContent === 'string') {
     const bashAllow = matchBashAllowRules(
@@ -214,7 +266,7 @@ export async function hasPermissionsToUseTool(
     }
   }
 
-  // 8. Surface deferred tool ask
+  // 9. Surface deferred tool ask
   if (toolAsk) {
     return {
       behavior: 'ask',
@@ -224,7 +276,7 @@ export async function hasPermissionsToUseTool(
     }
   }
 
-  // 9. Default → ask
+  // 10. Default → ask
   return {
     behavior: 'ask',
     reason: { type: 'default' },

@@ -218,7 +218,7 @@ describe('hasPermissionsToUseTool', () => {
     })
   })
 
-  describe('allow rules (step 6)', () => {
+  describe('allow rules (step 8)', () => {
     test('tool-level allow auto-allows', async () => {
       const tool = buildTool(makeToolDef())
       const ctx = createPermissionContext({
@@ -262,7 +262,7 @@ describe('hasPermissionsToUseTool', () => {
     })
   })
 
-  describe('default (step 7)', () => {
+  describe('default (step 10)', () => {
     test('defaults to ask when nothing matches', async () => {
       const tool = buildTool(makeToolDef())
       const ctx = createPermissionContext()
@@ -434,6 +434,233 @@ describe('hasPermissionsToUseTool', () => {
         makeContext(),
       )
       expect(result.behavior).toBe('allow')
+    })
+  })
+
+  describe('read-only auto-allow (step 7)', () => {
+    test('auto-allows read-only tool with file_path within CWD', async () => {
+      const tool = buildTool(makeToolDef({ name: 'Read', isReadOnly: () => true }))
+      const ctx = createPermissionContext()
+      const result = await hasPermissionsToUseTool(
+        tool,
+        { file_path: `${process.cwd()}/src/index.ts` },
+        ctx,
+        makeContext(),
+      )
+      expect(result.behavior).toBe('allow')
+      if (result.behavior === 'allow') {
+        expect(result.reason).toEqual({
+          type: 'toolSpecific',
+          description: 'Read-only tool within project directory',
+        })
+      }
+    })
+
+    test('auto-allows read-only tool with relative path (implicitly within CWD)', async () => {
+      const tool = buildTool(makeToolDef({ name: 'Read', isReadOnly: () => true }))
+      const ctx = createPermissionContext()
+      const result = await hasPermissionsToUseTool(
+        tool,
+        { file_path: 'src/index.ts' },
+        ctx,
+        makeContext(),
+      )
+      expect(result.behavior).toBe('allow')
+    })
+
+    test('auto-allows read-only tool with no paths (e.g., TaskList)', async () => {
+      const tool = buildTool(makeToolDef({ name: 'TaskList', isReadOnly: () => true }))
+      const ctx = createPermissionContext()
+      const result = await hasPermissionsToUseTool(
+        tool,
+        { value: 'hello' },
+        ctx,
+        makeContext(),
+      )
+      expect(result.behavior).toBe('allow')
+      if (result.behavior === 'allow') {
+        expect(result.reason).toEqual({
+          type: 'toolSpecific',
+          description: 'Read-only tool with no filesystem paths',
+        })
+      }
+    })
+
+    test('asks for read-only tool with path outside CWD', async () => {
+      const tool = buildTool(makeToolDef({ name: 'Read', isReadOnly: () => true }))
+      const ctx = createPermissionContext()
+      const result = await hasPermissionsToUseTool(
+        tool,
+        { file_path: '/etc/passwd' },
+        ctx,
+        makeContext(),
+      )
+      // Falls through to default ask
+      expect(result.behavior).toBe('ask')
+    })
+
+    test('asks for read-only tool with UNC path', async () => {
+      const tool = buildTool(makeToolDef({ name: 'Read', isReadOnly: () => true }))
+      const ctx = createPermissionContext()
+      const result = await hasPermissionsToUseTool(
+        tool,
+        { file_path: '\\\\server\\share\\file.txt' },
+        ctx,
+        makeContext(),
+      )
+      expect(result.behavior).toBe('ask')
+      if (result.behavior === 'ask') {
+        expect(result.reason).toEqual({
+          type: 'safetyCheck',
+          description: 'UNC paths may leak credentials',
+        })
+      }
+    })
+
+    test('asks for read-only tool with tilde expansion variant', async () => {
+      const tool = buildTool(makeToolDef({ name: 'Read', isReadOnly: () => true }))
+      const ctx = createPermissionContext()
+      const result = await hasPermissionsToUseTool(
+        tool,
+        { file_path: '~root/.bashrc' },
+        ctx,
+        makeContext(),
+      )
+      expect(result.behavior).toBe('ask')
+      if (result.behavior === 'ask') {
+        expect(result.reason.type).toBe('safetyCheck')
+      }
+    })
+
+    test('asks for read-only tool with shell expansion in path', async () => {
+      const tool = buildTool(makeToolDef({ name: 'Read', isReadOnly: () => true }))
+      const ctx = createPermissionContext()
+      const result = await hasPermissionsToUseTool(
+        tool,
+        { file_path: '/tmp/$HOME/file.txt' },
+        ctx,
+        makeContext(),
+      )
+      expect(result.behavior).toBe('ask')
+      if (result.behavior === 'ask') {
+        expect(result.reason.type).toBe('safetyCheck')
+      }
+    })
+
+    test('asks for read-only tool targeting sensitive .env file within CWD', async () => {
+      const tool = buildTool(makeToolDef({ name: 'Read', isReadOnly: () => true }))
+      const ctx = createPermissionContext()
+      const result = await hasPermissionsToUseTool(
+        tool,
+        { file_path: `${process.cwd()}/.env` },
+        ctx,
+        makeContext(),
+      )
+      expect(result.behavior).toBe('ask')
+      if (result.behavior === 'ask') {
+        expect(result.reason).toEqual({
+          type: 'safetyCheck',
+          description: 'Sensitive file path',
+        })
+      }
+    })
+
+    test('asks for read-only tool targeting .ssh within CWD', async () => {
+      const tool = buildTool(makeToolDef({ name: 'Read', isReadOnly: () => true }))
+      const ctx = createPermissionContext()
+      const result = await hasPermissionsToUseTool(
+        tool,
+        { file_path: `${process.cwd()}/.ssh/id_rsa` },
+        ctx,
+        makeContext(),
+      )
+      expect(result.behavior).toBe('ask')
+    })
+
+    test('does not auto-allow non-read-only tools', async () => {
+      const tool = buildTool(makeToolDef({ name: 'Write', isReadOnly: () => false }))
+      const ctx = createPermissionContext()
+      const result = await hasPermissionsToUseTool(
+        tool,
+        { file_path: `${process.cwd()}/src/index.ts` },
+        ctx,
+        makeContext(),
+      )
+      // Should fall through to default ask, not be auto-allowed
+      expect(result.behavior).toBe('ask')
+    })
+
+    test('deny rules override read-only auto-allow', async () => {
+      const tool = buildTool(makeToolDef({ name: 'Read', isReadOnly: () => true }))
+      const ctx = createPermissionContext({
+        alwaysDenyRules: { userSettings: ['Read'] },
+      })
+      const result = await hasPermissionsToUseTool(
+        tool,
+        { file_path: `${process.cwd()}/src/index.ts` },
+        ctx,
+        makeContext(),
+      )
+      expect(result.behavior).toBe('deny')
+    })
+
+    test('auto-allows Glob with path field within CWD', async () => {
+      const tool = buildTool(makeToolDef({ name: 'Glob', isReadOnly: () => true }))
+      const ctx = createPermissionContext()
+      const result = await hasPermissionsToUseTool(
+        tool,
+        { pattern: '*.ts', path: `${process.cwd()}/src` },
+        ctx,
+        makeContext(),
+      )
+      expect(result.behavior).toBe('allow')
+    })
+
+    test('dangerous path check runs before CWD check (defense-in-depth)', async () => {
+      // UNC path that happens to start with CWD-like prefix
+      const tool = buildTool(makeToolDef({ name: 'Read', isReadOnly: () => true }))
+      const ctx = createPermissionContext()
+      const result = await hasPermissionsToUseTool(
+        tool,
+        { file_path: '//server/share' },
+        ctx,
+        makeContext(),
+      )
+      expect(result.behavior).toBe('ask')
+      if (result.behavior === 'ask') {
+        expect(result.reason.type).toBe('safetyCheck')
+      }
+    })
+
+    test('sensitive path check runs before CWD check (defense-in-depth)', async () => {
+      const tool = buildTool(makeToolDef({ name: 'Read', isReadOnly: () => true }))
+      const ctx = createPermissionContext()
+      const result = await hasPermissionsToUseTool(
+        tool,
+        { file_path: `${process.cwd()}/credentials.json` },
+        ctx,
+        makeContext(),
+      )
+      expect(result.behavior).toBe('ask')
+      if (result.behavior === 'ask') {
+        expect(result.reason).toEqual({
+          type: 'safetyCheck',
+          description: 'Sensitive file path',
+        })
+      }
+    })
+
+    test('home directory path is outside CWD', async () => {
+      const tool = buildTool(makeToolDef({ name: 'Read', isReadOnly: () => true }))
+      const ctx = createPermissionContext()
+      const result = await hasPermissionsToUseTool(
+        tool,
+        { file_path: '~/Documents/file.txt' },
+        ctx,
+        makeContext(),
+      )
+      // ~/Documents is outside CWD, should fall through to default ask
+      expect(result.behavior).toBe('ask')
     })
   })
 

@@ -57,6 +57,13 @@ export {
   SettingsJsonSchema,
 } from './managed-settings.js'
 export type { SettingsJson, ManagedSettingsResult } from './managed-settings.js'
+export {
+  extractToolPaths,
+  getDangerousPathReason,
+  isSensitivePath,
+  isWithinDirectory,
+  checkReadOnlyPath,
+} from './path-validation.js'
 export { validatePermissionRule } from './rule-validation.js'
 export type { RuleValidationResult } from './rule-validation.js'
 export {
