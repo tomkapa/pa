@@ -91,3 +91,39 @@ export async function* executeUserPromptSubmitHooks(
     // No matchQuery — all UserPromptSubmit hooks fire
   })
 }
+
+// ---------------------------------------------------------------------------
+// Task lifecycle hooks — TaskCreated / TaskCompleted
+// ---------------------------------------------------------------------------
+
+function executeTaskHooks(
+  event: 'TaskCreated' | 'TaskCompleted',
+  taskId: string,
+  subject: string,
+  description: string,
+  signal?: AbortSignal,
+): AsyncGenerator<AggregatedHookResult> {
+  return executeHooks({
+    hookInput: {
+      hook_event_name: event,
+      session_id: getSessionId(),
+      cwd: process.cwd(),
+      task_id: taskId,
+      task_subject: subject,
+      task_description: description,
+    },
+    signal,
+  })
+}
+
+export async function* executeTaskCreatedHooks(
+  taskId: string, subject: string, description: string, signal?: AbortSignal,
+): AsyncGenerator<AggregatedHookResult> {
+  yield* executeTaskHooks('TaskCreated', taskId, subject, description, signal)
+}
+
+export async function* executeTaskCompletedHooks(
+  taskId: string, subject: string, description: string, signal?: AbortSignal,
+): AsyncGenerator<AggregatedHookResult> {
+  yield* executeTaskHooks('TaskCompleted', taskId, subject, description, signal)
+}

@@ -35,3 +35,15 @@ export function semanticBoolean<T extends ZodTypeAny>(inner: T) {
   }, inner)
 }
 
+/**
+ * Zod preprocessor that coerces numbers to strings. LLMs often send
+ * numeric IDs as bare numbers (`1`) instead of strings (`"1"`).
+ * Preserves `{type: "string"}` in the generated JSON schema.
+ */
+export function semanticString<T extends ZodTypeAny>(inner: T) {
+  return z.preprocess((val: unknown) => {
+    if (typeof val === 'number') return String(val)
+    return val
+  }, inner)
+}
+

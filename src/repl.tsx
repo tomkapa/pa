@@ -6,6 +6,7 @@ import { PermissionRequest } from './components/permission-dialog.js'
 import { AssistantToolUseBlock, ToolUseProgressBlock, UserToolResultBlock } from './components/tool-messages.js'
 import { ThinkingBlock } from './components/thinking-block.js'
 import { QueuedCommandsPreview } from './components/queued-commands-preview.js'
+import { TaskListPanel } from './components/task-list-panel.js'
 import {
   enqueueCommand,
   drainAllCommands,
@@ -46,6 +47,10 @@ import { bashToolDef } from './tools/bashTool.js'
 import { enterPlanModeToolDef } from './tools/enterPlanModeTool.js'
 import { exitPlanModeToolDef } from './tools/exitPlanModeTool.js'
 import { agentToolDef } from './tools/agentTool.js'
+import { taskCreateToolDef } from './tools/taskCreateTool.js'
+import { taskGetToolDef } from './tools/taskGetTool.js'
+import { taskListToolDef } from './tools/taskListTool.js'
+import { taskUpdateToolDef } from './tools/taskUpdateTool.js'
 import { FileStateCache } from './utils/fileStateCache.js'
 import type { Tool } from './services/tools/types.js'
 import { loadAllMcpTools } from './services/mcp/index.js'
@@ -277,6 +282,10 @@ function createDefaultREPLDeps(): REPLDeps {
   const bashTool = buildTool(bashToolDef())
   const enterPlanModeTool = buildTool(enterPlanModeToolDef())
   const exitPlanModeTool = buildTool(exitPlanModeToolDef())
+  const taskCreateTool = buildTool(taskCreateToolDef())
+  const taskGetTool = buildTool(taskGetToolDef())
+  const taskListTool = buildTool(taskListToolDef())
+  const taskUpdateTool = buildTool(taskUpdateToolDef())
 
   // The tools array is captured by reference. The agentTool's closure reads
   // it at call time, so late-arriving MCP tools are included automatically.
@@ -301,6 +310,7 @@ function createDefaultREPLDeps(): REPLDeps {
   tools.push(
     readTool, writeTool, editTool, globTool, grepTool, bashTool,
     enterPlanModeTool, exitPlanModeTool, agentTool,
+    taskCreateTool, taskGetTool, taskListTool, taskUpdateTool,
   )
 
   // Start loading MCP tools in the background. The tools array is mutated
@@ -708,6 +718,7 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
         />
       ))}
       {agentBusy && <Text color="yellow">Thinking...</Text>}
+      <TaskListPanel />
       {activeConfirm && (
         <PermissionRequest
           confirm={activeConfirm}

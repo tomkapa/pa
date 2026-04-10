@@ -1,4 +1,4 @@
-export { executePreToolHooks, executePostToolHooks, executeSessionStartHooks, executeUserPromptSubmitHooks } from './dispatch.js'
+export { executePreToolHooks, executePostToolHooks, executeSessionStartHooks, executeUserPromptSubmitHooks, executeTaskCreatedHooks, executeTaskCompletedHooks } from './dispatch.js'
 export type {
   HookEvent,
   CommandHook,

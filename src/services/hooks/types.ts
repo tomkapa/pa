@@ -10,6 +10,8 @@ export const HOOK_EVENTS = [
   'PostToolUse',
   'SessionStart',
   'UserPromptSubmit',
+  'TaskCreated',
+  'TaskCompleted',
 ] as const
 
 export type HookEvent = (typeof HOOK_EVENTS)[number]
@@ -74,11 +76,16 @@ const PostToolUseOutputSchema = contextOnlyOutputSchema('PostToolUse')
 const SessionStartOutputSchema = contextOnlyOutputSchema('SessionStart')
 const UserPromptSubmitOutputSchema = contextOnlyOutputSchema('UserPromptSubmit')
 
+const TaskCreatedOutputSchema = contextOnlyOutputSchema('TaskCreated')
+const TaskCompletedOutputSchema = contextOnlyOutputSchema('TaskCompleted')
+
 const HookSpecificOutputSchema = z.discriminatedUnion('hookEventName', [
   PreToolUseOutputSchema,
   PostToolUseOutputSchema,
   SessionStartOutputSchema,
   UserPromptSubmitOutputSchema,
+  TaskCreatedOutputSchema,
+  TaskCompletedOutputSchema,
 ])
 
 export const SyncHookResponseSchema = z.object({

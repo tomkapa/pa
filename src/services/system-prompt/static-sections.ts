@@ -91,6 +91,12 @@ export function getToolGuidanceSection(enabledTools: ReadonlySet<string>): strin
     )
   }
 
+  if (enabledTools.has('TaskCreate')) {
+    lines.push(
+      ' - Break down and manage your work with the TaskCreate tool. These tools are helpful for planning your work and helping the user track your progress. Mark each task as completed as soon as you are done with the task. Do not batch up multiple tasks before marking them as completed.',
+    )
+  }
+
   lines.push(
     ' - Make multiple tool calls in parallel when they are independent. Run dependent calls sequentially.',
   )

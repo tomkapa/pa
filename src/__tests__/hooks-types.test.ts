@@ -9,12 +9,14 @@ import {
 
 describe('Hook type schemas', () => {
   describe('HOOK_EVENTS', () => {
-    test('contains all four event types', () => {
+    test('contains all event types', () => {
       expect(HOOK_EVENTS).toEqual([
         'PreToolUse',
         'PostToolUse',
         'SessionStart',
         'UserPromptSubmit',
+        'TaskCreated',
+        'TaskCompleted',
       ])
     })
   })
