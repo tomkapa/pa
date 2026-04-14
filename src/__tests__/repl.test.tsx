@@ -6,6 +6,7 @@ import type { ToolBatchEvent } from '../services/tools/execution/types.js'
 import type { Tool } from '../services/tools/types.js'
 import type { QueryEvent } from '../types/streamEvents.js'
 import { initializeToolPermissionContext } from '../services/permissions/initialize.js'
+import { AgentRegistry } from '../services/agents/registry.js'
 import { makeAssistantMessage } from '../testing/make-assistant-message.js'
 
 const TICK = 100
@@ -17,6 +18,7 @@ function createFakeDeps(responses: string[]): REPLDeps {
 
   return {
     tools,
+    agentRegistry: new AgentRegistry(),
     initialPermissionContext: initializeToolPermissionContext().context,
     createQueryDeps: (): QueryDeps => ({
       async *callModel(_params: CallModelParams): AsyncGenerator<QueryEvent> {
@@ -34,6 +36,7 @@ function createFakeDeps(responses: string[]): REPLDeps {
 function createErrorDeps(errorMessage: string): REPLDeps {
   return {
     tools: [],
+    agentRegistry: new AgentRegistry(),
     initialPermissionContext: initializeToolPermissionContext().context,
     createQueryDeps: (): QueryDeps => ({
       async *callModel(): AsyncGenerator<QueryEvent> {
@@ -74,7 +77,8 @@ describe('REPL', () => {
     let resolveResponse: (() => void) | undefined
     const deps: REPLDeps = {
       tools: [],
-      initialPermissionContext: initializeToolPermissionContext().context,
+      agentRegistry: new AgentRegistry(),
+    initialPermissionContext: initializeToolPermissionContext().context,
       createQueryDeps: (): QueryDeps => ({
         async *callModel(): AsyncGenerator<QueryEvent> {
           await new Promise<void>(r => { resolveResponse = r })

@@ -10,6 +10,7 @@
 // dispatch).
 // ---------------------------------------------------------------------------
 
+import type { AgentRegistry } from '../services/agents/registry.js'
 import type { Message } from '../types/message.js'
 import type { SummarizeFn } from '../services/agent/auto-compact.js'
 import {
@@ -129,6 +130,42 @@ const mcpCommand: SlashCommand = {
       'info',
     )
   },
+}
+
+/**
+ * Create the `/agent` command. Takes the registry by reference so it sees
+ * agents loaded after startup.
+ */
+export function createAgentCommand(registry: AgentRegistry): SlashCommand {
+  return {
+    name: 'agent',
+    description: 'List loaded custom agent definitions',
+    execute: async (ctx) => {
+      const agents = registry.getAllAgents()
+      if (agents.length === 0) {
+        ctx.addSystemMessage(
+          'agent_list',
+          'No custom agents loaded. Create .pa/agents/<name>.md to define one.',
+          'info',
+        )
+        return
+      }
+
+      const lines = agents.map(a => {
+        const source = a.source === 'project' ? 'project' : 'built-in'
+        const tools = a.tools ? a.tools.join(', ') : 'all'
+        const blocked = a.disallowedTools ? ` (blocked: ${a.disallowedTools.join(', ')})` : ''
+        const model = a.model ? ` [model: ${a.model}]` : ''
+        return `  ${a.agentType} (${source})${model}\n    ${a.whenToUse}\n    tools: ${tools}${blocked}`
+      })
+
+      ctx.addSystemMessage(
+        'agent_list',
+        `Loaded agents:\n${lines.join('\n')}`,
+        'info',
+      )
+    },
+  }
 }
 
 // ---------------------------------------------------------------------------

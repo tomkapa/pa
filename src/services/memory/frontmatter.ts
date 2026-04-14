@@ -52,6 +52,44 @@ export function parseFrontmatter(markdown: string): ParsedFrontmatter {
 }
 
 /**
+ * Parse frontmatter and strip the leading blank line after the closing `---`.
+ *
+ * Both the custom-commands and agents parsers need this same trimming logic.
+ * This generic version lets callers narrow the frontmatter type via `as T`.
+ */
+export function parseFrontmatterTrimmed(markdown: string): ParsedFrontmatter {
+  const { frontmatter, content } = parseFrontmatter(markdown)
+  const trimmedContent = content.startsWith('\r\n')
+    ? content.slice(2)
+    : content.startsWith('\n')
+      ? content.slice(1)
+      : content
+  return { frontmatter, content: trimmedContent }
+}
+
+/**
+ * Normalize a tool list from frontmatter into a string array.
+ *
+ * Handles YAML lists, comma-separated strings, single strings, and the
+ * special wildcard `"*"` (returns `undefined`, meaning all tools).
+ * Returns `undefined` when the field is absent (all tools), `[]` when
+ * explicitly empty (no tools).
+ */
+export function normalizeToolList(
+  raw: string | string[] | undefined,
+): string[] | undefined {
+  if (raw === undefined) return undefined
+  if (Array.isArray(raw)) {
+    const result = raw.map(s => s.trim()).filter(Boolean)
+    return result.length === 0 ? [] : result
+  }
+  const trimmed = raw.trim()
+  if (trimmed === '*') return undefined
+  if (trimmed === '') return []
+  return trimmed.split(',').map(s => s.trim()).filter(Boolean)
+}
+
+/**
  * Extract glob patterns from the `paths:` frontmatter field.
  *
  * Accepts:

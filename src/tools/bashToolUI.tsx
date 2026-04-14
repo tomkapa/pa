@@ -7,6 +7,7 @@ import type {
   ToolRenderOptions,
   ToolResultRenderOptions,
 } from '../services/tools/types.js'
+import { formatElapsed } from '../utils/time.js'
 
 const MAX_COMMAND_DISPLAY_LINES = 2
 const MAX_COMMAND_DISPLAY_CHARS = 160
@@ -118,14 +119,6 @@ function isBashProgress(data: unknown): data is BashProgress {
     typeof d.stderr === 'string' &&
     typeof d.elapsedMs === 'number'
   )
-}
-
-function formatElapsed(elapsedMs: number): string {
-  const seconds = Math.floor(elapsedMs / 1000)
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  const remainder = seconds % 60
-  return `${minutes}m${remainder.toString().padStart(2, '0')}s`
 }
 
 function tailLines(text: string, maxLines: number, maxLineWidth: number): string[] {

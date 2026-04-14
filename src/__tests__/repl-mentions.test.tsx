@@ -9,6 +9,7 @@ import type { ToolBatchEvent } from '../services/tools/execution/types.js'
 import type { QueryEvent } from '../types/streamEvents.js'
 import type { Tool } from '../services/tools/types.js'
 import { initializeToolPermissionContext } from '../services/permissions/initialize.js'
+import { AgentRegistry } from '../services/agents/registry.js'
 import { makeAssistantMessage } from '../testing/make-assistant-message.js'
 import { buildTool } from '../services/tools/build-tool.js'
 import { readToolDef } from '../tools/readTool.js'
@@ -38,6 +39,7 @@ function createCapturingDeps(
 
   const deps: REPLDeps = {
     tools,
+    agentRegistry: new AgentRegistry(),
     initialPermissionContext: initializeToolPermissionContext().context,
     createQueryDeps: (): QueryDeps => ({
       async *callModel(params: CallModelParams): AsyncGenerator<QueryEvent> {

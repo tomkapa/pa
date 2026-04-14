@@ -10,7 +10,10 @@ import {
   CHILD_SYSTEM_PROMPT,
   CHILD_DISALLOWED_TOOLS,
 } from '../tools/agentTool.js'
+import { AgentRegistry } from '../services/agents/registry.js'
+import type { BuiltInAgentDefinition, CustomAgentDefinition } from '../services/agents/types.js'
 import { makeContext } from '../testing/make-context.js'
+import { makeFakeTool } from '../testing/make-tool-def.js'
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
@@ -49,27 +52,6 @@ function createAssistantMsg(
 
 function textBlock(text: string): ContentBlock {
   return { type: 'text', text, citations: null } as ContentBlock
-}
-
-function makeFakeTool(name: string) {
-  return buildTool({
-    name,
-    maxResultSizeChars: 1000,
-    get inputSchema() {
-      const { z } = require('zod')
-      return z.strictObject({})
-    },
-    isReadOnly: () => true,
-    isConcurrencySafe: () => true,
-    async call() {
-      return { data: { content: 'ok' } }
-    },
-    async prompt() { return `${name} tool` },
-    async description() { return name },
-    mapToolResultToToolResultBlockParam(output: { content: string }, id: string) {
-      return { type: 'tool_result' as const, tool_use_id: id, content: output.content }
-    },
-  })
 }
 
 function makeFakeChildDeps() {
@@ -216,7 +198,7 @@ describe('AgentTool', () => {
       expect(result.data.totalDurationMs).toBeGreaterThanOrEqual(0)
     })
 
-    test('returns "(no response)" when child produces no assistant message', async () => {
+    test('returns error when child produces no assistant message', async () => {
       const tool = buildTool(agentToolDef({
         createChildQueryDeps: () => ({
           callModel: async function* (): AsyncGenerator<QueryEvent> {},
@@ -232,8 +214,8 @@ describe('AgentTool', () => {
         ctx,
       )
 
-      expect(result.data.status).toBe('completed')
-      expect(result.data.content).toBe('(no response)')
+      expect(result.data.status).toBe('error')
+      expect(result.data.content).toContain('Sub-agent error')
     })
 
     test('extracts text from multi-block assistant response', async () => {
@@ -390,6 +372,224 @@ describe('AgentTool', () => {
       expect(result.tool_use_id).toBe('tu-123')
       expect(typeof result.content).toBe('string')
       expect(result.content).toContain('Found 3 files.')
+    })
+  })
+
+  // ── subagent_type resolution ────────────────────────────────────
+
+  describe('subagent_type', () => {
+    test('accepts optional subagent_type in input schema', () => {
+      const tool = buildTool(agentToolDef({
+        createChildQueryDeps: () => makeNoOpChildDeps(),
+        tools: [],
+      }))
+      const result = tool.inputSchema.safeParse({
+        prompt: 'test',
+        description: 'test',
+        subagent_type: 'code-reviewer',
+      })
+      expect(result.success).toBe(true)
+    })
+
+    test('subagent_type is optional — omitting it works', () => {
+      const tool = buildTool(agentToolDef({
+        createChildQueryDeps: () => makeNoOpChildDeps(),
+        tools: [],
+      }))
+      const result = tool.inputSchema.safeParse({
+        prompt: 'test',
+        description: 'test',
+      })
+      expect(result.success).toBe(true)
+    })
+
+    test('uses agent definition system prompt when subagent_type matches', async () => {
+      let receivedSystemPrompt: string[] = []
+
+      const registry = new AgentRegistry()
+      registry.register({
+        agentType: 'code-reviewer',
+        whenToUse: 'Reviews code',
+        tools: undefined,
+        getSystemPrompt: () => 'You are a code review specialist.',
+        source: 'built-in',
+      } satisfies BuiltInAgentDefinition)
+
+      const tool = buildTool(agentToolDef({
+        createChildQueryDeps: () => ({
+          callModel: async function* (params: CallModelParams): AsyncGenerator<QueryEvent> {
+            receivedSystemPrompt = params.systemPrompt
+            yield createAssistantMsg([textBlock('reviewed')])
+          },
+          executeToolBatch: async function* () {},
+          uuid: () => crypto.randomUUID(),
+        }),
+        tools: [makeFakeTool('Read'), makeFakeTool('Grep')],
+        agentRegistry: registry,
+      }))
+
+      const ctx = makeContext()
+      await tool.call(
+        { prompt: 'review this', description: 'Code review', subagent_type: 'code-reviewer' },
+        ctx,
+      )
+
+      expect(receivedSystemPrompt[0]).toBe('You are a code review specialist.')
+    })
+
+    test('uses default system prompt when subagent_type does not match', async () => {
+      let receivedSystemPrompt: string[] = []
+
+      const registry = new AgentRegistry()
+
+      const tool = buildTool(agentToolDef({
+        createChildQueryDeps: () => ({
+          callModel: async function* (params: CallModelParams): AsyncGenerator<QueryEvent> {
+            receivedSystemPrompt = params.systemPrompt
+            yield createAssistantMsg([textBlock('done')])
+          },
+          executeToolBatch: async function* () {},
+          uuid: () => crypto.randomUUID(),
+        }),
+        tools: [],
+        agentRegistry: registry,
+      }))
+
+      const ctx = makeContext()
+      await tool.call(
+        { prompt: 'test', description: 'test', subagent_type: 'nonexistent' },
+        ctx,
+      )
+
+      expect(receivedSystemPrompt[0]!.toLowerCase()).toContain('sub-agent')
+    })
+
+    test('applies tool allowlist from agent definition', async () => {
+      let childToolNames: string[] = []
+
+      const registry = new AgentRegistry()
+      registry.register({
+        agentType: 'reader',
+        whenToUse: 'Read only',
+        tools: ['Read', 'Grep'],
+        getSystemPrompt: () => 'Read-only agent.',
+        source: 'built-in',
+      } satisfies BuiltInAgentDefinition)
+
+      const tool = buildTool(agentToolDef({
+        createChildQueryDeps: (opts) => {
+          childToolNames = opts.tools.map(t => t.name)
+          return makeFakeChildDeps()
+        },
+        tools: [makeFakeTool('Read'), makeFakeTool('Grep'), makeFakeTool('Bash'), makeFakeTool('Write')],
+        agentRegistry: registry,
+      }))
+
+      const ctx = makeContext()
+      await tool.call(
+        { prompt: 'read', description: 'Read files', subagent_type: 'reader' },
+        ctx,
+      )
+
+      expect(childToolNames).toEqual(['Read', 'Grep'])
+    })
+
+    test('applies tool blocklist from agent definition', async () => {
+      let childToolNames: string[] = []
+
+      const registry = new AgentRegistry()
+      registry.register({
+        agentType: 'safe-agent',
+        whenToUse: 'No bash',
+        disallowedTools: ['Bash'],
+        getSystemPrompt: () => 'Safe agent.',
+        source: 'built-in',
+      } satisfies BuiltInAgentDefinition)
+
+      const tool = buildTool(agentToolDef({
+        createChildQueryDeps: (opts) => {
+          childToolNames = opts.tools.map(t => t.name)
+          return makeFakeChildDeps()
+        },
+        tools: [makeFakeTool('Read'), makeFakeTool('Bash'), makeFakeTool('Write')],
+        agentRegistry: registry,
+      }))
+
+      const ctx = makeContext()
+      await tool.call(
+        { prompt: 'work', description: 'Work safely', subagent_type: 'safe-agent' },
+        ctx,
+      )
+
+      expect(childToolNames).toContain('Read')
+      expect(childToolNames).toContain('Write')
+      expect(childToolNames).not.toContain('Bash')
+    })
+
+    test('custom agent overrides built-in with same name', async () => {
+      let receivedSystemPrompt: string[] = []
+
+      const registry = new AgentRegistry()
+      registry.registerBuiltIns([{
+        agentType: 'Explore',
+        whenToUse: 'Built-in explore',
+        getSystemPrompt: () => 'Built-in explore prompt.',
+        source: 'built-in',
+      }])
+      registry.registerCustom([{
+        agentType: 'Explore',
+        whenToUse: 'Custom explore',
+        getSystemPrompt: () => 'Custom explore prompt.',
+        source: 'project',
+        filename: 'explore',
+      }])
+
+      const tool = buildTool(agentToolDef({
+        createChildQueryDeps: () => ({
+          callModel: async function* (params: CallModelParams): AsyncGenerator<QueryEvent> {
+            receivedSystemPrompt = params.systemPrompt
+            yield createAssistantMsg([textBlock('explored')])
+          },
+          executeToolBatch: async function* () {},
+          uuid: () => crypto.randomUUID(),
+        }),
+        tools: [],
+        agentRegistry: registry,
+      }))
+
+      const ctx = makeContext()
+      await tool.call(
+        { prompt: 'explore', description: 'Explore', subagent_type: 'Explore' },
+        ctx,
+      )
+
+      expect(receivedSystemPrompt[0]).toBe('Custom explore prompt.')
+    })
+
+    test('works without agentRegistry (backward compatibility)', async () => {
+      let receivedSystemPrompt: string[] = []
+
+      const tool = buildTool(agentToolDef({
+        createChildQueryDeps: () => ({
+          callModel: async function* (params: CallModelParams): AsyncGenerator<QueryEvent> {
+            receivedSystemPrompt = params.systemPrompt
+            yield createAssistantMsg([textBlock('done')])
+          },
+          executeToolBatch: async function* () {},
+          uuid: () => crypto.randomUUID(),
+        }),
+        tools: [],
+        // No agentRegistry
+      }))
+
+      const ctx = makeContext()
+      await tool.call(
+        { prompt: 'test', description: 'test', subagent_type: 'anything' },
+        ctx,
+      )
+
+      // Falls back to default prompt
+      expect(receivedSystemPrompt[0]!.toLowerCase()).toContain('sub-agent')
     })
   })
 })

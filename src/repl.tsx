@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { useState, useCallback, useRef, useMemo, useEffect, useSyncExternalStore } from 'react'
 import { Box, Text, useInput, useApp } from './ink.js'
 import { TextInput } from './components/text-input.js'
@@ -47,6 +48,7 @@ import { bashToolDef } from './tools/bashTool.js'
 import { enterPlanModeToolDef } from './tools/enterPlanModeTool.js'
 import { exitPlanModeToolDef } from './tools/exitPlanModeTool.js'
 import { agentToolDef } from './tools/agentTool.js'
+import { AgentRegistry, loadCustomAgentDefinitions } from './services/agents/index.js'
 import { taskCreateToolDef } from './tools/taskCreateTool.js'
 import { taskGetToolDef } from './tools/taskGetTool.js'
 import { taskListToolDef } from './tools/taskListTool.js'
@@ -68,7 +70,7 @@ import {
 } from './services/system-prompt/index.js'
 import { cursorDefault, cursorIBeam } from '../ink/termio/csi.js'
 import type { SessionWriter } from './services/session/index.js'
-import { SLASH_COMMANDS, findCommand } from './commands/registry.js'
+import { SLASH_COMMANDS, findCommand, createAgentCommand } from './commands/registry.js'
 import type { SlashCommand } from './commands/registry.js'
 import { executeSessionStartHooks, executeUserPromptSubmitHooks } from './services/hooks/index.js'
 import { CustomCommandRegistry, discoverCommandDirectories } from './services/custom-commands/index.js'
@@ -263,6 +265,8 @@ export interface CreateQueryDepsOverrides {
 
 export interface REPLDeps {
   tools: Tool<unknown, unknown>[]
+  /** Agent registry for resolving custom subagent types. */
+  agentRegistry: AgentRegistry
   initialPermissionContext: ToolPermissionContext
   createQueryDeps: (
     abortController: AbortController,
@@ -301,8 +305,14 @@ function createDefaultREPLDeps(): REPLDeps {
   // it at call time, so late-arriving MCP tools are included automatically.
   const tools: Tool<unknown, unknown>[] = []
 
+  // Agent registry for resolving subagent_type to agent definitions.
+  // Created empty here and populated in the background (same pattern as MCP
+  // tools). The agentTool captures the reference and reads it at call time.
+  const agentRegistry = new AgentRegistry()
+
   const agentTool = buildTool(agentToolDef({
     tools,
+    agentRegistry,
     createChildQueryDeps: (opts) =>
       createQueryDeps({
         client,
@@ -334,12 +344,22 @@ function createDefaultREPLDeps(): REPLDeps {
     // loadAllMcpTools already logs errors internally; swallow here.
   })
 
+  // Load custom agent definitions from .pa/agents/ in the background.
+  // The registry is captured by reference — agents are available by the
+  // time the user's first Agent tool call resolves a subagent_type.
+  loadCustomAgentDefinitions(path.join(process.cwd(), '.pa', 'agents'))
+    .then(custom => agentRegistry.registerCustom(custom))
+    .catch(() => {
+      // Agent loading must not prevent startup. Loader logs warnings internally.
+    })
+
   const { context: initialPermissionContext } = initializeToolPermissionContext()
 
   const summarize: SummarizeFn = createAnthropicSummarizer(client, MODEL, MAX_TOKENS)
 
   return {
     tools,
+    agentRegistry,
     initialPermissionContext,
     summarize,
     createQueryDeps: (
@@ -400,9 +420,22 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
     [injectedDeps],
   )
 
+  // Built-in slash commands + /agent (needs the registry ref from replDeps).
+  const agentCommand = useMemo(() => createAgentCommand(replDeps.agentRegistry), [replDeps])
+  const builtInCommands = useMemo<readonly SlashCommand[]>(
+    () => [...SLASH_COMMANDS, agentCommand].sort((a, b) => a.name.localeCompare(b.name)),
+    [agentCommand],
+  )
+  // Map for O(1) dispatch lookup from runTurn — only includes commands not
+  // already in the static SLASH_COMMANDS list (i.e. the /agent command).
+  const dynamicBuiltInCommands = useMemo(
+    () => new Map(builtInCommands.filter(c => !findCommand(c.name)).map(c => [c.name, c])),
+    [builtInCommands],
+  )
+
   // Custom slash commands discovered from ~/.pa/commands/ and .pa/commands/
   const customCommandRegistryRef = useRef(new CustomCommandRegistry())
-  const [allSlashCommands, setAllSlashCommands] = useState<readonly SlashCommand[]>(SLASH_COMMANDS)
+  const [allSlashCommands, setAllSlashCommands] = useState<readonly SlashCommand[]>(builtInCommands)
 
   useEffect(() => {
     void (async () => {
@@ -410,14 +443,13 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
         const dirs = await discoverCommandDirectories(process.cwd())
         await customCommandRegistryRef.current.loadFromDirectories(dirs)
         const customSlash = customCommandRegistryRef.current.toSlashCommands()
-        if (customSlash.length > 0) {
-          setAllSlashCommands([...SLASH_COMMANDS, ...customSlash].sort((a, b) => a.name.localeCompare(b.name)))
-        }
+        setAllSlashCommands([...builtInCommands, ...customSlash].sort((a, b) => a.name.localeCompare(b.name)))
       } catch {
         // Custom command loading must not prevent startup
+        setAllSlashCommands(builtInCommands)
       }
     })()
-  }, [])
+  }, [builtInCommands])
 
   // Messages already persisted to disk are seeded into the set so we don't
   // re-write history we just read back. Also guards against
@@ -535,8 +567,8 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
       let customCommandMeta: { allowedTools?: string[]; model?: string } | undefined
       const slashMatch = value.match(/^\/(\S+)/)
       if (slashMatch) {
-        // Check built-in commands first
-        const cmd = findCommand(slashMatch[1]!)
+        // Check built-in commands first (includes /agent)
+        const cmd = findCommand(slashMatch[1]!) ?? dynamicBuiltInCommands.get(slashMatch[1]!)
         if (cmd) {
           await cmd.execute({
             args: value.slice(slashMatch[0]!.length).trim(),
@@ -660,7 +692,7 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
       // post-turn state.
       setAgentBusy(false)
     }
-  }, [replDeps, onQueryEvent, pushConfirm, persistMessage, addSystemMessage])
+  }, [replDeps, onQueryEvent, pushConfirm, persistMessage, addSystemMessage, dynamicBuiltInCommands])
 
   const handleSubmit = useCallback(async (value: string) => {
     const trimmed = value.trim()

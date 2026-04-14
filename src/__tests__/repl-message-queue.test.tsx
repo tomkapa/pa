@@ -7,6 +7,7 @@ import type { ToolBatchEvent } from '../services/tools/execution/types.js'
 import type { QueryEvent } from '../types/streamEvents.js'
 import type { AssistantMessage } from '../types/message.js'
 import { initializeToolPermissionContext } from '../services/permissions/initialize.js'
+import { AgentRegistry } from '../services/agents/registry.js'
 import { makeAssistantMessage } from '../testing/make-assistant-message.js'
 import { createUserMessage } from '../services/messages/factory.js'
 import { __resetCommandQueueForTests, getQueueSnapshot } from '../utils/messageQueue.js'
@@ -36,6 +37,7 @@ function createSlowDeps(responses: string[]): SlowDeps {
 
   const deps: SlowDeps = {
     tools: [],
+    agentRegistry: new AgentRegistry(),
     initialPermissionContext: initializeToolPermissionContext().context,
     responses,
     seenPrompts,
@@ -236,7 +238,8 @@ describe('REPL message queue', () => {
 
     const deps: REPLDeps = {
       tools: [],
-      initialPermissionContext: initializeToolPermissionContext().context,
+      agentRegistry: new AgentRegistry(),
+    initialPermissionContext: initializeToolPermissionContext().context,
       createQueryDeps: (): QueryDeps => ({
         async *callModel(params: CallModelParams): AsyncGenerator<QueryEvent> {
           capturedCalls.push(params)

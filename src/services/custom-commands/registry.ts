@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import type { SlashCommand, SlashCommandContext } from '../../commands/registry.js'
+import { normalizeToolList } from '../memory/frontmatter.js'
 import { parseFrontmatter, type CommandFrontmatter } from './frontmatter.js'
 import { substituteArguments, parseArgNames } from './arguments.js'
 import { scanCommandDirectories, type DiscoveredCommand } from './scanner.js'
@@ -18,18 +19,6 @@ export interface RegisteredCustomCommand {
 interface LoadDirectoriesOptions {
   userDirs: string[]
   projectDirs: string[]
-}
-
-/**
- * Normalize the `allowed-tools` frontmatter field into a string array.
- * Handles both comma-separated strings and YAML lists.
- */
-function normalizeAllowedTools(
-  raw: string | string[] | undefined,
-): string[] | undefined {
-  if (raw === undefined) return undefined
-  if (Array.isArray(raw)) return raw.map(s => s.trim())
-  return raw.split(',').map(s => s.trim()).filter(Boolean)
 }
 
 /**
@@ -93,7 +82,7 @@ export class CustomCommandRegistry {
       name: discovered.name,
       description: frontmatter.description ?? '',
       argumentHint: frontmatter['argument-hint'],
-      allowedTools: normalizeAllowedTools(frontmatter['allowed-tools']),
+      allowedTools: normalizeToolList(frontmatter['allowed-tools']),
       model: frontmatter.model,
       argNames,
       source: discovered.source,
