@@ -54,6 +54,7 @@ import { taskGetToolDef } from './tools/taskGetTool.js'
 import { taskListToolDef } from './tools/taskListTool.js'
 import { taskUpdateToolDef } from './tools/taskUpdateTool.js'
 import { webFetchToolDef, createWebFetchSummarizer } from './tools/webFetchTool.js'
+import { webSearchToolDef } from './tools/webSearchTool.js'
 import { FileStateCache } from './utils/fileStateCache.js'
 import type { Tool } from './services/tools/types.js'
 import { loadAllMcpTools } from './services/mcp/index.js'
@@ -304,6 +305,7 @@ function createDefaultREPLDeps(): REPLDeps {
   const webFetchTool = buildTool(webFetchToolDef({
     summarize: createWebFetchSummarizer(client, MODEL, MAX_TOKENS),
   }))
+  const webSearchTool = buildTool(webSearchToolDef())
 
   // The tools array is captured by reference. The agentTool's closure reads
   // it at call time, so late-arriving MCP tools are included automatically.
@@ -335,7 +337,7 @@ function createDefaultREPLDeps(): REPLDeps {
     readTool, writeTool, editTool, globTool, grepTool, bashTool,
     enterPlanModeTool, exitPlanModeTool, agentTool,
     taskCreateTool, taskGetTool, taskListTool, taskUpdateTool,
-    webFetchTool,
+    webFetchTool, webSearchTool,
   )
 
   // Start loading MCP tools in the background. The tools array is mutated
