@@ -100,25 +100,34 @@ export function createQueryDeps(options: CreateQueryDepsOptions): QueryDeps {
   const summarize = createAnthropicSummarizer(client, model, maxTokens)
   const autoCompact = createAutoCompactImpl(model, summarize)
 
+  /**
+   * Refresh the per-turn caches when the tool set has changed since the last
+   * call, then return the current deferred-tools announcement. Extracted so
+   * both `callModel` and `getDeferredAnnouncement` share identical staleness
+   * logic without duplicating it.
+   */
+  function refreshAndGetAnnouncement(): string | null {
+    if (tools.length !== lastToolsLength || discoveredTools.size !== lastDiscoveredSize) {
+      apiToolsPromise = undefined
+      cachedDeferredAnnouncement = undefined
+      lastToolsLength = tools.length
+      lastDiscoveredSize = discoveredTools.size
+    }
+    apiToolsPromise ??= toApiTools(getToolsForAPICall(tools, discoveredTools))
+    cachedDeferredAnnouncement ??= buildDeferredToolsAnnouncement(tools, discoveredTools)
+    return cachedDeferredAnnouncement
+  }
+
   return {
     callModel(params: CallModelParams): AsyncGenerator<QueryEvent> {
-      // Invalidate cached API tools and announcement when the tools array
-      // grows (MCP tools arrived) or new tools are discovered via ToolSearch.
-      if (tools.length !== lastToolsLength || discoveredTools.size !== lastDiscoveredSize) {
-        apiToolsPromise = undefined
-        cachedDeferredAnnouncement = undefined
-        lastToolsLength = tools.length
-        lastDiscoveredSize = discoveredTools.size
-      }
-      // Filter to loaded tools (non-deferred + previously discovered) before
-      // converting to API format. Deferred tools are announced via a
-      // system-reminder block so the model knows they exist.
-      apiToolsPromise ??= toApiTools(getToolsForAPICall(tools, discoveredTools))
-      cachedDeferredAnnouncement ??= buildDeferredToolsAnnouncement(tools, discoveredTools)
+      const announcement = refreshAndGetAnnouncement()
       return callModelImpl(
-        client, model, maxTokens, params, apiToolsPromise,
-        cachedDeferredAnnouncement,
+        client, model, maxTokens, params, apiToolsPromise!,
+        announcement,
       )
+    },
+    getDeferredAnnouncement(): string | null {
+      return refreshAndGetAnnouncement()
     },
     executeToolBatch(params) {
       return executeToolBatchImpl(

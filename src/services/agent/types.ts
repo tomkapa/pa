@@ -104,6 +104,15 @@ export interface QueryDeps {
    * about the mode switch on the very next API call.
    */
   getPermissionMode?: () => PermissionMode
+  /**
+   * Optional. Returns the deferred-tools announcement string (the
+   * `<system-reminder>` block listing tool names) that will be appended to
+   * the system prompt on the next API call, or `null` when no tools are
+   * deferred. Used by the query loop to include this block in the LLM span
+   * input so the Langfuse trace reflects the full system prompt sent to the
+   * model.
+   */
+  getDeferredAnnouncement?: () => string | null
 }
 
 export interface AgentQueryParams {

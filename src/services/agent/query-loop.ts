@@ -179,6 +179,15 @@ export async function* queryLoop(
 
       let assistantMessage: AssistantMessage | undefined
 
+      // Include the deferred-tools announcement in the span so the Langfuse
+      // Input panel shows the full system prompt actually sent to the model.
+      // Without this, the <system-reminder> block appended in deps.ts would
+      // be missing from the trace even though it consumes tokens.
+      const deferredAnnouncement = deps.getDeferredAnnouncement?.()
+      const spanSystemPrompt = deferredAnnouncement
+        ? [...systemPrompt, deferredAnnouncement]
+        : systemPrompt
+
       const llmSpan = startLLMRequestSpan({
         model: 'claude',
         messageCount: messageParams.length,
@@ -188,7 +197,7 @@ export async function* queryLoop(
         input: messageParams,
         // Include the system prompt so the Langfuse Input panel shows
         // { system, messages } — the full prompt context for optimization.
-        systemPrompt,
+        systemPrompt: spanSystemPrompt,
       })
       try {
         for await (const event of deps.callModel({
