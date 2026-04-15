@@ -54,6 +54,7 @@ export const TASK_UPDATE_TOOL_NAME = 'TaskUpdate'
 export function taskUpdateToolDef(): ToolDef<TaskUpdateInput, TaskUpdateOutput> {
   return {
     name: TASK_UPDATE_TOOL_NAME,
+    shouldDefer: true,
     maxResultSizeChars: 5_000,
 
     get inputSchema(): ZodType<TaskUpdateInput> {

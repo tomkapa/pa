@@ -34,6 +34,7 @@ export const TASK_LIST_TOOL_NAME = 'TaskList'
 export function taskListToolDef(): ToolDef<TaskListInput, TaskListOutput> {
   return {
     name: TASK_LIST_TOOL_NAME,
+    shouldDefer: true,
     maxResultSizeChars: 20_000,
 
     get inputSchema(): ZodType<TaskListInput> {

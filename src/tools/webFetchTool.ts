@@ -291,6 +291,7 @@ export function webFetchToolDef(
 ): ToolDef<WebFetchToolInput, WebFetchToolOutput> {
   return {
     name: WEB_FETCH_TOOL_NAME,
+    shouldDefer: true,
     maxResultSizeChars: 100_000,
 
     get inputSchema(): ZodType<WebFetchToolInput> {

@@ -122,6 +122,7 @@ async function searchBrave(
 export function webSearchToolDef(): ToolDef<WebSearchToolInput, WebSearchToolOutput> {
   return {
     name: WEB_SEARCH_TOOL_NAME,
+    shouldDefer: true,
     maxResultSizeChars: 100_000,
 
     get inputSchema(): ZodType<WebSearchToolInput> {

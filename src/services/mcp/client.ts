@@ -135,9 +135,15 @@ type McpToolOutput = ToolResultBlockParam['content']
 function wrapMcpTool(conn: ConnectedConnection, mcp: McpToolDescriptor): Tool<Record<string, unknown>, McpToolOutput> {
   const fullName = buildMcpToolName(conn.name, mcp.name)
 
+  // MCP servers can declare `_meta['anthropic/alwaysLoad']` to opt out of
+  // deferred loading — the tool appears in the API tools array on turn 1
+  // without a ToolSearch round-trip.
+  const alwaysLoad = mcp._meta?.['anthropic/alwaysLoad'] === true
+
   return {
     name: fullName,
     isMcp: true,
+    alwaysLoad,
     mcpInfo: { serverName: conn.name, toolName: mcp.name },
     inputSchema: mcpPassthroughSchema,
     inputJSONSchema: mcp.inputSchema,

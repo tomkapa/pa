@@ -1,6 +1,11 @@
 export { buildTool } from './build-tool.js'
 export { getTools, findToolByName } from './registry.js'
-export { toApiTools } from './to-api-tools.js'
+export { toApiTools, toolInputToJsonSchema } from './to-api-tools.js'
+export {
+  isDeferredTool,
+  getToolsForAPICall,
+  buildDeferredToolsAnnouncement,
+} from './deferred-tools.js'
 export type {
   Tool,
   ToolDef,

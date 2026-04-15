@@ -23,6 +23,7 @@ export interface ExitPlanModeOutput {
 export function exitPlanModeToolDef(): ToolDef<ExitPlanModeInput, ExitPlanModeOutput> {
   return {
     name: 'ExitPlanMode',
+    shouldDefer: true,
     maxResultSizeChars: 50_000,
 
     get inputSchema() {

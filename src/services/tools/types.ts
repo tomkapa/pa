@@ -121,6 +121,15 @@ export interface Tool<Input = unknown, Output = unknown> {
   /** MCP provenance — server name and original (unprefixed) tool name. */
   mcpInfo?: { serverName: string; toolName: string }
 
+  /** When true, this tool is deferred — requires ToolSearch to load its schema. */
+  readonly shouldDefer?: boolean
+
+  /**
+   * When true, never defer this tool even if it's MCP.
+   * MCP tools set this via `_meta['anthropic/alwaysLoad']` in their tool listing.
+   */
+  readonly alwaysLoad?: boolean
+
   // Core execution
   call(input: Input, context: ToolUseContext): Promise<ToolResult<Output>>
 
@@ -175,6 +184,8 @@ export interface ToolDef<Input = unknown, Output = unknown> {
 
   isMcp?: boolean
   mcpInfo?: { serverName: string; toolName: string }
+  readonly shouldDefer?: boolean
+  readonly alwaysLoad?: boolean
 
   call(input: Input, context: ToolUseContext): Promise<ToolResult<Output>>
   prompt(): Promise<string>

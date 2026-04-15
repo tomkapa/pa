@@ -25,4 +25,6 @@ export interface McpToolDescriptor {
     destructiveHint?: boolean
     openWorldHint?: boolean
   }
+  /** Vendor-specific metadata from the MCP server. */
+  _meta?: Record<string, unknown>
 }

@@ -30,6 +30,7 @@ export const TASK_GET_TOOL_NAME = 'TaskGet'
 export function taskGetToolDef(): ToolDef<TaskGetInput, TaskGetOutput> {
   return {
     name: TASK_GET_TOOL_NAME,
+    shouldDefer: true,
     maxResultSizeChars: 10_000,
 
     get inputSchema(): ZodType<TaskGetInput> {

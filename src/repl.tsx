@@ -55,6 +55,8 @@ import { taskListToolDef } from './tools/taskListTool.js'
 import { taskUpdateToolDef } from './tools/taskUpdateTool.js'
 import { webFetchToolDef, createWebFetchSummarizer } from './tools/webFetchTool.js'
 import { webSearchToolDef } from './tools/webSearchTool.js'
+import { toolSearchToolDef } from './tools/toolSearchTool.js'
+import { isDeferredTool } from './services/tools/deferred-tools.js'
 import { FileStateCache } from './utils/fileStateCache.js'
 import type { Tool } from './services/tools/types.js'
 import { loadAllMcpTools } from './services/mcp/index.js'
@@ -311,6 +313,14 @@ function createDefaultREPLDeps(): REPLDeps {
   // it at call time, so late-arriving MCP tools are included automatically.
   const tools: Tool<unknown, unknown>[] = []
 
+  // ToolSearch is conditionally enabled — only when deferred tools exist.
+  // It captures `tools` by reference so it can check at call time whether
+  // any deferred tools are present (MCP tools may arrive after startup).
+  const toolSearchTool = buildTool({
+    ...toolSearchToolDef(),
+    isEnabled: () => tools.some(isDeferredTool),
+  })
+
   // Agent registry for resolving subagent_type to agent definitions.
   // Created empty here and populated in the background (same pattern as MCP
   // tools). The agentTool captures the reference and reads it at call time.
@@ -337,7 +347,7 @@ function createDefaultREPLDeps(): REPLDeps {
     readTool, writeTool, editTool, globTool, grepTool, bashTool,
     enterPlanModeTool, exitPlanModeTool, agentTool,
     taskCreateTool, taskGetTool, taskListTool, taskUpdateTool,
-    webFetchTool, webSearchTool,
+    webFetchTool, webSearchTool, toolSearchTool,
   )
 
   // Start loading MCP tools in the background. The tools array is mutated

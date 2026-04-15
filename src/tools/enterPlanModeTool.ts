@@ -24,6 +24,7 @@ export interface EnterPlanModeOutput {
 export function enterPlanModeToolDef(): ToolDef<EnterPlanModeInput, EnterPlanModeOutput> {
   return {
     name: 'EnterPlanMode',
+    shouldDefer: true,
     maxResultSizeChars: 2_000,
 
     get inputSchema() {

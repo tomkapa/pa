@@ -36,6 +36,7 @@ export const TASK_CREATE_TOOL_NAME = 'TaskCreate'
 export function taskCreateToolDef(): ToolDef<TaskCreateInput, TaskCreateOutput> {
   return {
     name: TASK_CREATE_TOOL_NAME,
+    shouldDefer: true,
     maxResultSizeChars: 2_000,
 
     get inputSchema(): ZodType<TaskCreateInput> {
