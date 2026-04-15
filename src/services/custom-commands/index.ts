@@ -1,5 +1,5 @@
-export { parseFrontmatter, type ParsedCommand, type CommandFrontmatter } from './frontmatter.js'
+export { parseFrontmatter, parseSkillFields, type ParsedCommand, type CommandFrontmatter, type EffortValue, type ParsedSkillFields } from './frontmatter.js'
 export { substituteArguments, parseArgNames } from './arguments.js'
-export { scanCommandDirectories, deriveCommandName, type DiscoveredCommand } from './scanner.js'
+export { scanCommandDirectories, deriveCommandName, SKILL_FILE, type DiscoveredCommand } from './scanner.js'
 export { CustomCommandRegistry, type RegisteredCustomCommand } from './registry.js'
 export { discoverCommandDirectories, type CommandDirectories } from './discovery.js'

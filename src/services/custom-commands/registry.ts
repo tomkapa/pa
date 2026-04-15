@@ -1,9 +1,10 @@
 import { readFile } from 'node:fs/promises'
 import type { SlashCommand, SlashCommandContext } from '../../commands/registry.js'
 import { normalizeToolList } from '../memory/frontmatter.js'
-import { parseFrontmatter, type CommandFrontmatter } from './frontmatter.js'
+import { parseFrontmatter, type CommandFrontmatter, type EffortValue } from './frontmatter.js'
 import { substituteArguments, parseArgNames } from './arguments.js'
 import { scanCommandDirectories, type DiscoveredCommand } from './scanner.js'
+import { loadSkillsFromDirectory } from '../skills/loader.js'
 
 export interface RegisteredCustomCommand {
   name: string
@@ -14,11 +15,25 @@ export interface RegisteredCustomCommand {
   argNames: string[]
   source: 'user' | 'project'
   getPrompt: (args: string) => Promise<string>
+  // Skill-specific fields (populated when loadedFrom === 'skills')
+  loadedFrom: 'commands' | 'skills'
+  whenToUse?: string
+  userInvocable: boolean
+  disableModelInvocation: boolean
+  effort?: EffortValue
+  version?: string
+  skillRoot?: string
+  hasUserSpecifiedDescription: boolean
+  contentLength: number
 }
 
 interface LoadDirectoriesOptions {
   userDirs: string[]
   projectDirs: string[]
+  /** User skill directory: `~/.pa/skills/` */
+  userSkillDir?: string
+  /** Project skill directory: `.pa/skills/` */
+  projectSkillDir?: string
 }
 
 /**
@@ -32,28 +47,49 @@ export class CustomCommandRegistry {
   private readonly commands = new Map<string, RegisteredCustomCommand>()
 
   /**
-   * Discover and register commands from user and project directories.
+   * Discover and register commands + skills from user and project directories.
    *
-   * User commands shadow project commands when they share the same name.
-   * Within each source, later directories take precedence.
+   * Loading order (first-found wins for same name):
+   *   1. User skills      (user skills dir)
+   *   2. Project skills   (project skills dir)
+   *   3. User commands    (user commands dir)
+   *   4. Project commands (project commands dir)
+   *
+   * Skills take priority over commands. Within each category, user
+   * takes priority over project.
    */
   async loadFromDirectories(opts: LoadDirectoriesOptions): Promise<void> {
     this.commands.clear()
 
-    // Scan user and project directories concurrently (they are independent)
-    const [projectCommands, userCommands] = await Promise.all([
-      scanCommandDirectories(opts.projectDirs, 'project'),
-      scanCommandDirectories(opts.userDirs, 'user'),
-    ])
+    // Load all sources concurrently
+    const [userSkills, projectSkills, projectCommands, userCommands] =
+      await Promise.all([
+        opts.userSkillDir
+          ? loadSkillsFromDirectory(opts.userSkillDir, 'user')
+          : Promise.resolve([]),
+        opts.projectSkillDir
+          ? loadSkillsFromDirectory(opts.projectSkillDir, 'project')
+          : Promise.resolve([]),
+        scanCommandDirectories(opts.projectDirs, 'project'),
+        scanCommandDirectories(opts.userDirs, 'user'),
+      ])
 
-    // Register project commands first, then user commands (user overwrites)
-    const allDiscovered = [...projectCommands, ...userCommands]
+    // Skills first (higher priority), then commands.
+    // Within each group, user sources shadow project sources.
+    // We register in reverse-priority order so later entries overwrite.
+    const allDiscoveredCommands = [...projectCommands, ...userCommands]
 
-    for (const discovered of allDiscovered) {
+    for (const discovered of allDiscoveredCommands) {
       const registered = await this.registerCommand(discovered)
       if (registered) {
         this.commands.set(discovered.name.toLowerCase(), registered)
       }
+    }
+
+    // Register skills — they overwrite commands with the same name.
+    // Project skills first, then user skills (user wins).
+    for (const skill of [...projectSkills, ...userSkills]) {
+      this.commands.set(skill.name.toLowerCase(), skill)
     }
   }
 
@@ -92,6 +128,12 @@ export class CustomCommandRegistry {
         const freshArgNames = parseArgNames(freshParsed.frontmatter.arguments)
         return substituteArguments(freshParsed.content, args, freshArgNames)
       },
+      // Default skill fields for commands loaded from .pa/commands/
+      loadedFrom: 'commands' as const,
+      userInvocable: true,
+      disableModelInvocation: false,
+      hasUserSpecifiedDescription: !!frontmatter.description,
+      contentLength: 0, // Not tracked for legacy commands
     }
   }
 
@@ -121,18 +163,33 @@ export class CustomCommandRegistry {
    * Convert registered custom commands to `SlashCommand` objects for
    * integration with the autocomplete picker in TextInput.
    *
+   * Skills with `userInvocable: false` are excluded — they can only
+   * be invoked by the model via SkillTool.
+   *
    * The `execute` handler is a no-op stub — custom commands are dispatched
    * differently from built-in commands (they expand into a user message and
    * trigger an agent turn rather than running client-side).
    */
   toSlashCommands(): SlashCommand[] {
-    return this.getAllCommands().map(cmd => ({
-      name: cmd.name,
-      description: cmd.description || `Custom command (${cmd.source})`,
-      execute: async (_ctx: SlashCommandContext): Promise<void> => {
-        // No-op: custom commands are handled in the REPL dispatch path,
-        // not through SlashCommand.execute.
-      },
-    }))
+    return this.getAllCommands()
+      .filter(cmd => cmd.userInvocable)
+      .map(cmd => ({
+        name: cmd.name,
+        description: cmd.description || `Custom command (${cmd.source})`,
+        execute: async (_ctx: SlashCommandContext): Promise<void> => {
+          // No-op: custom commands are handled in the REPL dispatch path,
+          // not through SlashCommand.execute.
+        },
+      }))
+  }
+
+  /**
+   * Get commands that the model can invoke via SkillTool.
+   *
+   * Filters to prompt-type commands that are not disabled for model
+   * invocation. Both skills and commands are eligible.
+   */
+  getModelInvocableCommands(): RegisteredCustomCommand[] {
+    return this.getAllCommands().filter(cmd => !cmd.disableModelInvocation)
   }
 }

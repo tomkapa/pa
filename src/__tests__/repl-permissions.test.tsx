@@ -7,6 +7,7 @@ import type { QueryEvent } from '../types/streamEvents.js'
 import { initializeToolPermissionContext } from '../services/permissions/initialize.js'
 import { createPermissionContext } from '../services/permissions/context.js'
 import { AgentRegistry } from '../services/agents/registry.js'
+import { CustomCommandRegistry } from '../services/custom-commands/registry.js'
 import { makeAssistantMessage } from '../testing/make-assistant-message.js'
 
 const TICK = 100
@@ -17,6 +18,7 @@ function createFakeDeps(responses: string[] = []): REPLDeps {
   return {
     tools: [],
     agentRegistry: new AgentRegistry(),
+    customCommandRegistry: new CustomCommandRegistry(),
     initialPermissionContext: initializeToolPermissionContext().context,
     createQueryDeps: (): QueryDeps => ({
       async *callModel(_params: CallModelParams): AsyncGenerator<QueryEvent> {
@@ -35,6 +37,7 @@ function createDepsWithBypassAvailable(responses: string[] = []): REPLDeps {
   return {
     tools: [],
     agentRegistry: new AgentRegistry(),
+    customCommandRegistry: new CustomCommandRegistry(),
     initialPermissionContext: createPermissionContext({ isBypassPermissionsModeAvailable: true }),
     createQueryDeps: (): QueryDeps => ({
       async *callModel(_params: CallModelParams): AsyncGenerator<QueryEvent> {

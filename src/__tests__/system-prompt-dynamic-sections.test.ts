@@ -39,9 +39,9 @@ describe('getSessionGuidanceSection', () => {
       { name: 'review' },
     ]
     const out = getSessionGuidanceSection(new Set(), skills)
-    expect(out!).toContain('/commit')
+    expect(out!).toContain('commit')
     expect(out!).toContain('Make a commit')
-    expect(out!).toContain('/review')
+    expect(out!).toContain('review')
   })
 })
 

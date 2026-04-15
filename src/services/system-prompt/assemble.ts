@@ -58,6 +58,8 @@ export interface SystemPromptAssemblyOptions {
   language?: string
   /** Optional output-style configuration string. */
   outputStyle?: string
+  /** Context window size in tokens — used for budget-controlling skill listings. */
+  contextWindowTokens?: number
   /**
    * Override the dynamic-section registry. Used by tests so they can
    * isolate the assembly logic from real I/O. When provided, this
@@ -89,6 +91,7 @@ export async function getSystemPrompt(
     language,
     outputStyle,
     permissionContext,
+    contextWindowTokens,
   } = options
 
   // Pre-compute env info synchronously so it can be embedded in a cached
@@ -97,7 +100,7 @@ export async function getSystemPrompt(
 
   const dynamicRegistry: Section[] =
     options.dynamicSections ?? [
-      cachedSection('session_guidance', () => getSessionGuidanceSection(enabledTools, skills)),
+      cachedSection('session_guidance', () => getSessionGuidanceSection(enabledTools, skills, contextWindowTokens)),
       cachedSection('memory', () => getMemorySection()),
       cachedSection('auto_memory', () => getAutoMemorySection()),
       cachedSection('env_info', () => getEnvironmentInfoSection(envInfo)),

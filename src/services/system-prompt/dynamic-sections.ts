@@ -17,6 +17,7 @@ import {
   loadMemory,
   type LoadMemoryOptions,
 } from '../memory/index.js'
+import { formatCommandsWithinBudget } from '../skills/listing.js'
 import {
   getAutoMemoryDir,
   ensureAutoMemoryDir,
@@ -44,6 +45,7 @@ export interface MCPServerInfo {
 export interface SkillSummary {
   name: string
   description?: string
+  whenToUse?: string
 }
 
 /**
@@ -51,10 +53,14 @@ export interface SkillSummary {
  * "use Agent for broad searches") and any skills that are available in
  * the current working directory. Returns `null` when there is nothing
  * useful to say so the section disappears entirely.
+ *
+ * Skill listing is budget-controlled: descriptions are progressively
+ * truncated to stay within 1% of the context window.
  */
 export function getSessionGuidanceSection(
   enabledTools: ReadonlySet<string>,
   skills: ReadonlyArray<SkillSummary>,
+  contextWindowTokens?: number,
 ): string | null {
   const lines: string[] = []
 
@@ -69,10 +75,13 @@ export function getSessionGuidanceSection(
     )
   }
   if (skills.length > 0) {
-    lines.push(' - The following skills are available for this session:')
-    for (const skill of skills) {
-      const desc = skill.description ? ` — ${skill.description}` : ''
-      lines.push(`   - /${skill.name}${desc}`)
+    const formatted = formatCommandsWithinBudget(skills, contextWindowTokens)
+    if (formatted) {
+      lines.push(' - The following skills are available for this session:')
+      // Indent each skill line under the bullet
+      for (const line of formatted.split('\n')) {
+        lines.push(`   ${line}`)
+      }
     }
   }
 

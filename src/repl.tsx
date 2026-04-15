@@ -56,6 +56,7 @@ import { taskUpdateToolDef } from './tools/taskUpdateTool.js'
 import { webFetchToolDef, createWebFetchSummarizer } from './tools/webFetchTool.js'
 import { webSearchToolDef } from './tools/webSearchTool.js'
 import { toolSearchToolDef } from './tools/toolSearchTool.js'
+import { skillToolDef } from './tools/skillTool.js'
 import { isDeferredTool } from './services/tools/deferred-tools.js'
 import { FileStateCache } from './utils/fileStateCache.js'
 import type { Tool } from './services/tools/types.js'
@@ -102,10 +103,18 @@ const MENTION_PICKER_LIMIT = 15
 async function buildPromptForSubmit(
   tools: Tool<unknown, unknown>[],
   permissionContext?: ToolPermissionContext,
+  registry?: CustomCommandRegistry,
 ): Promise<string[]> {
   const enabledTools = new Set(tools.map(t => t.name))
+  const skills = registry
+    ? registry.getModelInvocableCommands().map(cmd => ({
+        name: cmd.name,
+        description: cmd.description || undefined,
+        whenToUse: cmd.whenToUse,
+      }))
+    : []
   const [defaultPrompt, userCtx, sysCtx] = await Promise.all([
-    getSystemPrompt({ enabledTools, modelId: MODEL, permissionContext }),
+    getSystemPrompt({ enabledTools, modelId: MODEL, permissionContext, skills }),
     getUserContext(),
     getSystemContext(),
   ])
@@ -271,6 +280,8 @@ export interface REPLDeps {
   tools: Tool<unknown, unknown>[]
   /** Agent registry for resolving custom subagent types. */
   agentRegistry: AgentRegistry
+  /** Custom command + skill registry (shared between SkillTool and REPL). */
+  customCommandRegistry: CustomCommandRegistry
   initialPermissionContext: ToolPermissionContext
   createQueryDeps: (
     abortController: AbortController,
@@ -321,6 +332,15 @@ function createDefaultREPLDeps(): REPLDeps {
     isEnabled: () => tools.some(isDeferredTool),
   })
 
+  // Custom command + skill registry. Created here so the SkillTool can
+  // capture it by reference. Loading happens in the REPL component's
+  // useEffect (same lifecycle as before).
+  const customCommandRegistry = new CustomCommandRegistry()
+
+  // SkillTool — lets the model invoke skills programmatically. Captures
+  // the registry by reference so skills loaded after startup are available.
+  const skillTool = buildTool(skillToolDef({ registry: customCommandRegistry }))
+
   // Agent registry for resolving subagent_type to agent definitions.
   // Created empty here and populated in the background (same pattern as MCP
   // tools). The agentTool captures the reference and reads it at call time.
@@ -347,7 +367,7 @@ function createDefaultREPLDeps(): REPLDeps {
     readTool, writeTool, editTool, globTool, grepTool, bashTool,
     enterPlanModeTool, exitPlanModeTool, agentTool,
     taskCreateTool, taskGetTool, taskListTool, taskUpdateTool,
-    webFetchTool, webSearchTool, toolSearchTool,
+    webFetchTool, webSearchTool, toolSearchTool, skillTool,
   )
 
   // Start loading MCP tools in the background. The tools array is mutated
@@ -377,6 +397,7 @@ function createDefaultREPLDeps(): REPLDeps {
   return {
     tools,
     agentRegistry,
+    customCommandRegistry,
     initialPermissionContext,
     summarize,
     createQueryDeps: (
@@ -450,8 +471,9 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
     [builtInCommands],
   )
 
-  // Custom slash commands discovered from ~/.pa/commands/ and .pa/commands/
-  const customCommandRegistryRef = useRef(new CustomCommandRegistry())
+  // Custom slash commands + skills discovered from ~/.pa/ and .pa/ directories.
+  // The registry lives in replDeps so the SkillTool can reference it too.
+  const customCommandRegistryRef = useRef(replDeps.customCommandRegistry)
   const [allSlashCommands, setAllSlashCommands] = useState<readonly SlashCommand[]>(builtInCommands)
 
   useEffect(() => {
@@ -462,7 +484,7 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
         const customSlash = customCommandRegistryRef.current.toSlashCommands()
         setAllSlashCommands([...builtInCommands, ...customSlash].sort((a, b) => a.name.localeCompare(b.name)))
       } catch {
-        // Custom command loading must not prevent startup
+        // Custom command + skill loading must not prevent startup
         setAllSlashCommands(builtInCommands)
       }
     })()
@@ -668,7 +690,7 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
             queryDepsOverrides,
           ),
         ),
-        buildPromptForSubmit(effectiveTools, permissionContextRef.current),
+        buildPromptForSubmit(effectiveTools, permissionContextRef.current, customCommandRegistryRef.current),
       ])
 
       // Between-iterations drain: picks up messages the user buffered

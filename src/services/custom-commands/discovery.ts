@@ -57,23 +57,32 @@ async function findProjectCommandDirs(cwd: string): Promise<string[]> {
 export interface CommandDirectories {
   userDirs: string[]
   projectDirs: string[]
+  /** User skill directory: `~/.pa/skills/` */
+  userSkillDir: string
+  /** Project skill directory: `.pa/skills/` in the project root (cwd). */
+  projectSkillDir: string
 }
 
 /**
- * Discover all command directories for the current session.
+ * Discover all command and skill directories for the current session.
  *
  * Priority order (highest wins):
- *   1. User home: `~/.pa/commands/`
- *   2. Project: `.pa/commands/` (walk upward from cwd to git root)
+ *   1. User skills:    `~/.pa/skills/`
+ *   2. Project skills: `.pa/skills/` (cwd only — no walk-up)
+ *   3. User commands:  `~/.pa/commands/`
+ *   4. Project commands: `.pa/commands/` (walk upward from cwd to git root)
  */
 export async function discoverCommandDirectories(
   cwd: string,
 ): Promise<CommandDirectories> {
-  const userDir = path.join(getConfigHomeDir(), 'commands')
+  const configHome = getConfigHomeDir()
+  const userDir = path.join(configHome, 'commands')
   const projectDirs = await findProjectCommandDirs(cwd)
 
   return {
     userDirs: [userDir],
     projectDirs,
+    userSkillDir: path.join(configHome, 'skills'),
+    projectSkillDir: path.join(cwd, '.pa', 'skills'),
   }
 }

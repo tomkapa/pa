@@ -7,7 +7,7 @@ export interface DiscoveredCommand {
   source: 'user' | 'project'
 }
 
-const SKILL_FILE = 'SKILL.md'
+export const SKILL_FILE = 'SKILL.md'
 
 /**
  * Derive a command name from a file path relative to its commands directory.
