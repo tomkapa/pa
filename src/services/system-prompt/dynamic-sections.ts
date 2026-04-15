@@ -17,6 +17,12 @@ import {
   loadMemory,
   type LoadMemoryOptions,
 } from '../memory/index.js'
+import {
+  getAutoMemoryDir,
+  ensureAutoMemoryDir,
+  buildAutoMemoryPrompt,
+} from '../auto-memory/index.js'
+import { logForDebugging } from '../observability/debug.js'
 import type { ToolPermissionContext } from '../permissions/types.js'
 import { getPlanFilePath } from '../plans/index.js'
 import { getSessionId } from '../observability/state.js'
@@ -179,6 +185,29 @@ export function getPlanModeSection(
     '- When your plan is ready, call the ExitPlanMode tool to request user approval',
     '- If your plan is rejected, iterate on the plan file and call ExitPlanMode again',
   ].join('\n')
+}
+
+/**
+ * Build the auto-memory section. This gives the model a persistent,
+ * file-based memory system it can use to accumulate knowledge across
+ * sessions. The section includes behavioral instructions and the
+ * current MEMORY.md index content.
+ *
+ * Returns `null` only on unexpected errors — even an empty memory
+ * directory still gets the instructions so the model knows the
+ * system exists.
+ */
+export async function getAutoMemorySection(
+  cwd: string = process.cwd(),
+): Promise<string | null> {
+  try {
+    const memoryDir = getAutoMemoryDir(cwd)
+    await ensureAutoMemoryDir(memoryDir)
+    return await buildAutoMemoryPrompt(memoryDir)
+  } catch (error) {
+    logForDebugging(`auto-memory section failed: ${error}`, { level: 'warn' })
+    return null
+  }
 }
 
 /**

@@ -7,6 +7,7 @@ import { findFirstMatchingRule } from './context.js'
 import { isFilesystemCommand } from './safety.js'
 import { checkBashCommandSecurity, matchBashAllowRules } from './command-security.js'
 import { isSessionPlanFile } from '../plans/index.js'
+import { getAutoMemoryDir, isAutoMemoryPath } from '../auto-memory/index.js'
 import { expandPath } from '../../utils/expandPath.js'
 import {
   extractToolPaths,
@@ -102,6 +103,23 @@ export async function hasPermissionsToUseTool(
         behavior: 'allow',
         reason: { type: 'toolSpecific', description: 'Session plan file is always writable' },
         updatedInput: input,
+      }
+    }
+  }
+
+  // 1.6. Auto-memory directory — Write/Edit to the memory directory are
+  //       auto-approved so the model can save memories without prompting.
+  //       Deny rules (step 1) still win over this carve-out.
+  if (toolName === 'Write' || toolName === 'Edit') {
+    const filePath = extractToolContent(tool, input)
+    if (filePath) {
+      const memoryDir = getAutoMemoryDir(cwd)
+      if (isAutoMemoryPath(expandPath(filePath), memoryDir)) {
+        return {
+          behavior: 'allow',
+          reason: { type: 'toolSpecific', description: 'Auto-memory directory is auto-approved' },
+          updatedInput: input,
+        }
       }
     }
   }

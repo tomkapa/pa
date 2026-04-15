@@ -18,6 +18,7 @@ import {
 } from './registry.js'
 import {
   computeEnvironmentInfo,
+  getAutoMemorySection,
   getEnvironmentInfoSection,
   getLanguageSection,
   getMcpInstructionsSection,
@@ -98,6 +99,7 @@ export async function getSystemPrompt(
     options.dynamicSections ?? [
       cachedSection('session_guidance', () => getSessionGuidanceSection(enabledTools, skills)),
       cachedSection('memory', () => getMemorySection()),
+      cachedSection('auto_memory', () => getAutoMemorySection()),
       cachedSection('env_info', () => getEnvironmentInfoSection(envInfo)),
       cachedSection('language', () => getLanguageSection(language)),
       cachedSection('output_style', () => getOutputStyleSection(outputStyle)),
