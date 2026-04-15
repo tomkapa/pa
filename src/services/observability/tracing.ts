@@ -476,6 +476,12 @@ export interface LLMRequestParams {
   parent?: Span
   /** Full messages array sent to the model; rendered in Langfuse's Input panel. */
   input?: unknown
+  /**
+   * System prompt sections sent to the model. When provided, the Input panel
+   * in Langfuse shows `{ system, messages }` so the full prompt context
+   * (system + conversation history) is visible for prompt optimization.
+   */
+  systemPrompt?: string[]
 }
 
 export interface LLMResponseUsage {
@@ -559,8 +565,15 @@ export function startLLMRequestSpan(params: LLMRequestParams): Span {
     [ATTR.LANGFUSE_OBSERVATION_TYPE]: OBS_TYPE_GENERATION,
     [ATTR.PA_MESSAGES_COUNT]: params.messageCount,
   }
-  if (params.input !== undefined) {
-    attrs[ATTR.LANGFUSE_OBSERVATION_INPUT] = serializeObservationValue(params.input)
+  if (params.systemPrompt !== undefined || params.input !== undefined) {
+    // When a system prompt is present, structure the input as { system, messages }
+    // so Langfuse's Input panel shows the full prompt context — system sections
+    // and conversation history — in one place for prompt optimization.
+    const inputValue =
+      params.systemPrompt !== undefined
+        ? { system: params.systemPrompt, messages: params.input }
+        : params.input
+    attrs[ATTR.LANGFUSE_OBSERVATION_INPUT] = serializeObservationValue(inputValue)
   }
   return t.startSpan(
     `${OP_CHAT} ${params.model}`,

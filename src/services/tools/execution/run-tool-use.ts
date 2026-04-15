@@ -2,7 +2,7 @@ import type { Tool, ToolUseContext } from '../types.js'
 import { findToolByName } from '../registry.js'
 import { createUserMessage } from '../../messages/factory.js'
 import { getErrorMessage } from '../../../utils/error.js'
-import { isEmptyContent, maybeTruncateLargeResult } from './result-size.js'
+import { maybePersistLargeToolResult, effectiveThreshold } from './persist-result.js'
 import { Stream } from './stream.js'
 import { executePreToolHooks, executePostToolHooks } from '../../hooks/index.js'
 import type {
@@ -157,14 +157,11 @@ export async function* runToolUse(
 
   let resultBlock = tool.mapToolResultToToolResultBlockParam(toolResult.data, toolUseID)
 
-  if (isEmptyContent(resultBlock.content)) {
-    resultBlock = {
-      ...resultBlock,
-      content: `(${toolName} completed with no output)`,
-    }
-  }
-
-  resultBlock = maybeTruncateLargeResult(resultBlock, toolName, tool.maxResultSizeChars)
+  resultBlock = await maybePersistLargeToolResult(
+    resultBlock,
+    toolName,
+    effectiveThreshold(tool.maxResultSizeChars),
+  )
 
   // --- PostToolUse hooks ---
   for await (const hookResult of executePostToolHooks(

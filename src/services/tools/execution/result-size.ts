@@ -1,5 +1,4 @@
 import type { ToolResultBlockParam } from '../types.js'
-import { MAX_RESULT_CHARS } from './types.js'
 
 /**
  * Check if a tool_result content block is empty or effectively empty.
@@ -35,56 +34,4 @@ export function contentSize(
     }, 0)
   }
   return 0
-}
-
-/**
- * If the tool result exceeds the size threshold, truncate with a preview.
- *
- * The MVP does simple truncation. A future enhancement (CODE-51) adds
- * persist-to-disk, per-tool thresholds, and aggregate budgets.
- */
-export function maybeTruncateLargeResult(
-  block: ToolResultBlockParam,
-  toolName: string,
-  threshold = MAX_RESULT_CHARS,
-): ToolResultBlockParam {
-  const size = contentSize(block.content)
-  if (size <= threshold) return block
-
-  if (typeof block.content === 'string') {
-    const previewLen = Math.min(2000, threshold)
-    const preview = block.content.slice(0, previewLen)
-    return {
-      ...block,
-      content: `Output too large (${size} chars, limit ${threshold}). Truncated.\n\nPreview:\n${preview}\n...`,
-    }
-  }
-
-  // Array content: truncate text blocks
-  if (Array.isArray(block.content)) {
-    let remaining = threshold
-    const truncated = block.content.map(b => {
-      if (b.type === 'text' && remaining > 0) {
-        const sliced = b.text.slice(0, remaining)
-        remaining -= sliced.length
-        return { ...b, text: sliced }
-      }
-      if (b.type === 'text') {
-        return { ...b, text: '' }
-      }
-      return b
-    })
-    return {
-      ...block,
-      content: [
-        ...truncated,
-        {
-          type: 'text' as const,
-          text: `\n...\n(${toolName} output truncated: ${size} chars exceeded ${threshold} limit)`,
-        },
-      ],
-    }
-  }
-
-  return block
 }

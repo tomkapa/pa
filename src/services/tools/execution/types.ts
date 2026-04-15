@@ -85,4 +85,4 @@ export type ToolBatchEvent =
 // ---------------------------------------------------------------------------
 
 export const DEFAULT_CONCURRENCY_CAP = 10
-export const MAX_RESULT_CHARS = 50_000
+export const DEFAULT_MAX_RESULT_SIZE_CHARS = 50_000

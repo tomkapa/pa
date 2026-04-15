@@ -51,7 +51,7 @@ export function readToolDef(
 ): ToolDef<ReadToolInput, ReadToolOutput> {
   return {
     name: READ_TOOL_NAME,
-    maxResultSizeChars: 100_000,
+    maxResultSizeChars: Infinity,
 
     get inputSchema(): ZodType<ReadToolInput> {
       return z.strictObject({

@@ -134,6 +134,52 @@ describe('observability/tracing', () => {
     )
   })
 
+  test('llm_request span includes system prompt in input when provided', async () => {
+    const interaction = startInteractionSpan('q')
+    const messages = [{ role: 'user', content: 'hi' }]
+    const systemPrompt = ['You are a helpful assistant.', 'Always be concise.']
+    const llm = startLLMRequestSpan({
+      model: 'claude-test',
+      messageCount: 1,
+      parent: interaction,
+      input: messages,
+      systemPrompt,
+    })
+    endLLMRequestSpan(llm, { stopReason: 'end_turn' })
+    endInteractionSpan(interaction)
+    await flushTracer()
+
+    const spans = __getCollectedSpansForTests()
+    const llmSpan = spans.find(s => s.name === `${OP_CHAT} claude-test`)!
+    expect(llmSpan).toBeDefined()
+
+    // Input panel must show { system, messages } so Langfuse exposes the full
+    // prompt context — system sections + conversation history — for optimization.
+    const input = JSON.parse(llmSpan.attributes[ATTR.LANGFUSE_OBSERVATION_INPUT] as string)
+    expect(input).toEqual({ system: systemPrompt, messages })
+  })
+
+  test('llm_request span omits system key from input when no systemPrompt provided', async () => {
+    const interaction = startInteractionSpan('q')
+    const messages = [{ role: 'user', content: 'hi' }]
+    const llm = startLLMRequestSpan({
+      model: 'claude-test',
+      messageCount: 1,
+      parent: interaction,
+      input: messages,
+    })
+    endLLMRequestSpan(llm, { stopReason: 'end_turn' })
+    endInteractionSpan(interaction)
+    await flushTracer()
+
+    const spans = __getCollectedSpansForTests()
+    const llmSpan = spans.find(s => s.name === `${OP_CHAT} claude-test`)!
+    expect(llmSpan).toBeDefined()
+
+    // Without systemPrompt the input is the raw messages array — backward-compatible.
+    expect(llmSpan.attributes[ATTR.LANGFUSE_OBSERVATION_INPUT]).toBe(JSON.stringify(messages))
+  })
+
   test('tool span uses GenAI semconv attributes and nests under interaction', async () => {
     const interaction = startInteractionSpan('test')
     const toolInput = { command: 'ls -la' }

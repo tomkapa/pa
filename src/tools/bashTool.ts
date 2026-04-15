@@ -338,7 +338,7 @@ function formatResult(output: BashToolOutput): string {
 export function bashToolDef(): ToolDef<BashToolInput, BashToolOutput> {
   return {
     name: 'Bash',
-    maxResultSizeChars: 100_000,
+    maxResultSizeChars: 30_000,
 
     get inputSchema(): ZodType<BashToolInput> {
       return z.strictObject({

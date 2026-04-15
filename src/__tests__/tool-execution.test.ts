@@ -6,7 +6,6 @@ import { partitionIntoBatches } from '../services/tools/execution/partition.js'
 import {
   isEmptyContent,
   contentSize,
-  maybeTruncateLargeResult,
 } from '../services/tools/execution/result-size.js'
 import { runToolUse } from '../services/tools/execution/run-tool-use.js'
 import { runTools } from '../services/tools/execution/run-tools.js'
@@ -367,7 +366,7 @@ describe('partitionIntoBatches', () => {
 })
 
 // ═══════════════════════════════════════════════════════════════════════
-// isEmptyContent / contentSize / maybeTruncateLargeResult
+// isEmptyContent / contentSize
 // ═══════════════════════════════════════════════════════════════════════
 
 describe('result-size', () => {
@@ -413,34 +412,6 @@ describe('result-size', () => {
         { type: 'text' as const, text: 'abc' },
         { type: 'text' as const, text: 'de' },
       ])).toBe(5)
-    })
-  })
-
-  describe('maybeTruncateLargeResult', () => {
-    test('small result passes through unchanged', () => {
-      const block = {
-        type: 'tool_result' as const,
-        tool_use_id: 'test',
-        content: 'small',
-      }
-      expect(maybeTruncateLargeResult(block, 'Test', 100)).toBe(block)
-    })
-
-    test('large string result is truncated with preview', () => {
-      const longContent = 'x'.repeat(10_000)
-      const block = {
-        type: 'tool_result' as const,
-        tool_use_id: 'test',
-        content: longContent,
-      }
-
-      const result = maybeTruncateLargeResult(block, 'BigTool', 5_000)
-      expect(typeof result.content).toBe('string')
-      const content = result.content as string
-      expect(content).toContain('Output too large')
-      expect(content).toContain('10000 chars')
-      expect(content).toContain('Preview:')
-      expect(content.length).toBeLessThan(longContent.length)
     })
   })
 })

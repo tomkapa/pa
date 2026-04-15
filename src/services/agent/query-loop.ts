@@ -186,6 +186,9 @@ export async function* queryLoop(
         // Feed the Langfuse Input panel the exact messages the agent sent
         // to the model — this is the high-value payload for debugging.
         input: messageParams,
+        // Include the system prompt so the Langfuse Input panel shows
+        // { system, messages } — the full prompt context for optimization.
+        systemPrompt,
       })
       try {
         for await (const event of deps.callModel({

@@ -26,9 +26,10 @@ export {
   runTools,
   isEmptyContent,
   contentSize,
-  maybeTruncateLargeResult,
+  maybePersistLargeToolResult,
+  effectiveThreshold,
   DEFAULT_CONCURRENCY_CAP,
-  MAX_RESULT_CHARS,
+  DEFAULT_MAX_RESULT_SIZE_CHARS,
 } from './execution/index.js'
 export type {
   ToolUseBlock,
