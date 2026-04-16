@@ -57,6 +57,8 @@ import { webFetchToolDef, createWebFetchSummarizer } from './tools/webFetchTool.
 import { webSearchToolDef } from './tools/webSearchTool.js'
 import { toolSearchToolDef } from './tools/toolSearchTool.js'
 import { skillToolDef } from './tools/skillTool.js'
+import { lspToolDef } from './tools/lspTool.js'
+import { warmupLspServer } from './lsp/manager.js'
 import { isDeferredTool } from './services/tools/deferred-tools.js'
 import { FileStateCache } from './utils/fileStateCache.js'
 import type { Tool } from './services/tools/types.js'
@@ -319,6 +321,7 @@ function createDefaultREPLDeps(): REPLDeps {
     summarize: createWebFetchSummarizer(client, MODEL, MAX_TOKENS),
   }))
   const webSearchTool = buildTool(webSearchToolDef())
+  const lspTool = buildTool(lspToolDef())
 
   // The tools array is captured by reference. The agentTool's closure reads
   // it at call time, so late-arriving MCP tools are included automatically.
@@ -367,7 +370,7 @@ function createDefaultREPLDeps(): REPLDeps {
     readTool, writeTool, editTool, globTool, grepTool, bashTool,
     enterPlanModeTool, exitPlanModeTool, agentTool,
     taskCreateTool, taskGetTool, taskListTool, taskUpdateTool,
-    webFetchTool, webSearchTool, toolSearchTool, skillTool,
+    webFetchTool, webSearchTool, toolSearchTool, skillTool, lspTool,
   )
 
   // Start loading MCP tools in the background. The tools array is mutated
@@ -380,6 +383,8 @@ function createDefaultREPLDeps(): REPLDeps {
   }).catch(() => {
     // loadAllMcpTools already logs errors internally; swallow here.
   })
+
+  warmupLspServer()
 
   // Load custom agent definitions from .pa/agents/ in the background.
   // The registry is captured by reference — agents are available by the
