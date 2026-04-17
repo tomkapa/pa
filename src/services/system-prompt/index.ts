@@ -31,6 +31,7 @@ export {
   getOutputStyleSection,
   getPlanModeSection,
   getSessionGuidanceSection,
+  getTeammateModeSection,
   type EnvironmentInfo,
   type MCPServerInfo,
   type SkillSummary,

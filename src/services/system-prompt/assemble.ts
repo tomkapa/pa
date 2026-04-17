@@ -26,9 +26,11 @@ import {
   getOutputStyleSection,
   getPlanModeSection,
   getSessionGuidanceSection,
+  getTeammateModeSection,
   type MCPServerInfo,
   type SkillSummary,
 } from './dynamic-sections.js'
+import { getTeammateIdentity } from '../teams/identity.js'
 import type { ToolPermissionContext } from '../permissions/types.js'
 import {
   getActionsSection,
@@ -101,6 +103,7 @@ export async function getSystemPrompt(
   const dynamicRegistry: Section[] =
     options.dynamicSections ?? [
       cachedSection('session_guidance', () => getSessionGuidanceSection(enabledTools, skills, contextWindowTokens)),
+      cachedSection('teammate_mode', () => getTeammateModeSection(getTeammateIdentity())),
       cachedSection('memory', () => getMemorySection()),
       cachedSection('auto_memory', () => getAutoMemorySection()),
       cachedSection('env_info', () => getEnvironmentInfoSection(envInfo)),

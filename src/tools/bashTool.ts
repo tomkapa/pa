@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto'
 import { z, type ZodType } from 'zod'
 import type { ToolDef, ToolResultBlockParam, ToolUseContext, PermissionResult } from '../services/tools/types.js'
 import { semanticNumber } from '../utils/schema.js'
+import { shellQuote } from '../utils/shell.js'
 import { checkProtectedPath } from '../services/permissions/safety.js'
 import {
   renderToolUseMessage,
@@ -75,10 +76,6 @@ function makeCwdTempPath(): string {
 function wrapCommand(userCommand: string, cwdFile: string): string {
   // >| forces overwrite even with noclobber set
   return `eval ${shellQuote(userCommand)} && pwd -P >| ${shellQuote(cwdFile)}`
-}
-
-function shellQuote(s: string): string {
-  return "$'" + s.replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "'"
 }
 
 function truncatePreview(s: string, maxLen: number): string {

@@ -6,6 +6,7 @@ import { buildTool } from '../services/tools/build-tool.js'
 import { agentToolDef } from '../tools/agentTool.js'
 import { createTeam, readTeamFile, readMailbox } from '../services/teams/index.js'
 import { spawnTeammate } from '../services/teams/spawn.js'
+import { __resetTmuxForTests } from '../services/teams/tmuxPanes.js'
 import type { QueryDeps } from '../services/agent/types.js'
 import { makeContext } from '../testing/make-context.js'
 
@@ -16,9 +17,11 @@ beforeEach(async () => {
   tempHome = await mkdtemp(path.join(tmpdir(), 'pa-agenttool-'))
   prevHome = process.env['PA_HOME']
   process.env['PA_HOME'] = tempHome
+  __resetTmuxForTests()
 })
 
 afterEach(async () => {
+  __resetTmuxForTests()
   if (prevHome === undefined) delete process.env['PA_HOME']
   else process.env['PA_HOME'] = prevHome
   await rm(tempHome, { recursive: true, force: true })

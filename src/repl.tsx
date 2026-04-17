@@ -766,6 +766,7 @@ export function REPL({ deps: injectedDeps, session, initialPermissionMode }: REP
         },
       }
 
+      let sawModelError = false
       for await (const event of query({
         messages: updatedMessages,
         systemPrompt,
@@ -773,6 +774,21 @@ export function REPL({ deps: injectedDeps, session, initialPermissionMode }: REP
         deps,
       })) {
         onQueryEvent(event)
+        if (event.type === 'system' && event.subtype === 'model_error') {
+          sawModelError = true
+        }
+      }
+      // Teammate self-exit: a teammate can't do useful work if the model is
+      // unreachable. After the query loop's own retry+circuit-breaker has
+      // given up, we terminate so the process, its sockets, and its team
+      // member record all get reclaimed via the unmount cleanup.
+      if (sawModelError && isTeammate()) {
+        addSystemMessage(
+          'teammate_self_exit',
+          'Model unreachable after retries — teammate exiting to release resources.',
+          'warning',
+        )
+        teammateShouldExitRef.current = true
       }
     } catch (error: unknown) {
       addSystemMessage('repl_error', getErrorMessage(error), 'error')
@@ -901,6 +917,16 @@ export function REPL({ deps: injectedDeps, session, initialPermissionMode }: REP
   const teammateMode = isTeammate()
   const teamAgentName = getAgentName() ?? TEAM_LEADER_NAME
   const teamName = getTeamName()
+
+  // Set by runTurn when a teammate's model retries + circuit breaker
+  // exhaust. Drives an exit() after the turn unwinds so the unmount
+  // cleanup (idle notification, isActive=false) runs.
+  const teammateShouldExitRef = useRef(false)
+  useEffect(() => {
+    if (!agentBusy && teammateShouldExitRef.current) {
+      exit()
+    }
+  })
 
   const onInboxMessage = useCallback((msg: TeammateMessage) => {
     enqueueCommand({

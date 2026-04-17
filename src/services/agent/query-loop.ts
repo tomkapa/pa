@@ -11,6 +11,12 @@ import { getErrorMessage } from '../../utils/error.js'
 import { buildPostCompactMessages, createInitialAutoCompactTracking } from './auto-compact.js'
 import { detectEffortLevel, type EffortLevel } from './thinking.js'
 import {
+  MAX_MODEL_RETRIES,
+  computeBackoffMs,
+  isRetriableModelError,
+  sleepWithAbort,
+} from './retry.js'
+import {
   endInteractionSpan,
   endLLMRequestSpan,
   endToolSpan,
@@ -30,6 +36,14 @@ import type {
 import { getModeChangeMessage } from './mode-change.js'
 
 const DEFAULT_MAX_TURNS = 100
+
+/**
+ * Circuit breaker: if this many LLM calls within one queryLoop invocation
+ * each exhaust their full retry budget, stop retrying for the rest of the
+ * turn. Protects against a persistent overload burning through token +
+ * wall-clock budget in a runaway multi-tool agent turn.
+ */
+const MAX_CONSECUTIVE_MODEL_FAILURES = 3
 
 function extractToolUseBlocks(content: ContentBlock[]): ToolUseInfo[] {
   return content
@@ -87,6 +101,8 @@ export async function* queryLoop(
   logForDebugging(`agent: interaction started (${state.messages.length} messages)`, { level: 'info' })
 
   let terminal: Terminal | undefined
+  // Tripped when too many LLM calls in a row exhaust their retry budget.
+  let consecutiveModelFailures = 0
 
   try {
     while (true) {
@@ -181,57 +197,108 @@ export async function* queryLoop(
 
       // Include the deferred-tools announcement in the span so the Langfuse
       // Input panel shows the full system prompt actually sent to the model.
-      // Without this, the <system-reminder> block appended in deps.ts would
-      // be missing from the trace even though it consumes tokens.
       const deferredAnnouncement = deps.getDeferredAnnouncement?.()
       const spanSystemPrompt = deferredAnnouncement
         ? [...systemPrompt, deferredAnnouncement]
         : systemPrompt
 
-      const llmSpan = startLLMRequestSpan({
+      // Retry loop wraps a single LLM call. Each attempt gets its own span
+      // so the trace accurately reflects what happened. `assistantMessage`
+      // is only set when the stream completes cleanly; on transient errors
+      // (529/503) the stream fails before content is yielded, so retrying
+      // is safe from the consumer's perspective.
+      let attempt = 0
+      let retriedError: unknown = null
+      let llmSpan = startLLMRequestSpan({
         model: 'claude',
         messageCount: messageParams.length,
         parent: interactionSpan,
-        // Feed the Langfuse Input panel the exact messages the agent sent
-        // to the model — this is the high-value payload for debugging.
         input: messageParams,
-        // Include the system prompt so the Langfuse Input panel shows
-        // { system, messages } — the full prompt context for optimization.
         systemPrompt: spanSystemPrompt,
       })
-      try {
-        for await (const event of deps.callModel({
-          messages: messageParams,
-          systemPrompt,
-          effort,
-          abortSignal,
-        })) {
-          yield event
-          if (event.type === 'assistant') {
-            assistantMessage = event
+      callLoop: while (true) {
+        try {
+          for await (const event of deps.callModel({
+            messages: messageParams,
+            systemPrompt,
+            effort,
+            abortSignal,
+          })) {
+            yield event
+            if (event.type === 'assistant') {
+              assistantMessage = event
+            }
           }
-        }
-      } catch (error: unknown) {
-        endLLMRequestSpan(llmSpan, { stopReason: 'error' })
-        if (isAbortError(error)) {
-          terminal = { reason: 'aborted', turnCount: state.turnCount }
-          return terminal
-        }
+          retriedError = null
+          break callLoop
+        } catch (error: unknown) {
+          if (isAbortError(error)) {
+            endLLMRequestSpan(llmSpan, { stopReason: 'error' })
+            terminal = { reason: 'aborted', turnCount: state.turnCount }
+            return terminal
+          }
 
-        const msg = getErrorMessage(error)
-        logForDebugging(`agent: model error — ${msg}`, { level: 'error' })
+          const retriable = isRetriableModelError(error)
+          const budgetLeft = attempt < MAX_MODEL_RETRIES
+          const breakerOpen = consecutiveModelFailures < MAX_CONSECUTIVE_MODEL_FAILURES
+          if (retriable && budgetLeft && breakerOpen) {
+            endLLMRequestSpan(llmSpan, { stopReason: 'error' })
+            attempt++
+            const delayMs = computeBackoffMs(attempt - 1)
+            logForDebugging(
+              `agent: transient model error (${getErrorMessage(error)}) — ` +
+              `retry ${attempt}/${MAX_MODEL_RETRIES} after ${delayMs}ms`,
+              { level: 'warn' },
+            )
+            yield createSystemMessage({
+              subtype: 'model_retry',
+              content:
+                `Model overloaded — retry ${attempt}/${MAX_MODEL_RETRIES} ` +
+                `in ${Math.round(delayMs / 1000)}s…`,
+              level: 'warning',
+            })
+            try {
+              await sleepWithAbort(delayMs, abortSignal)
+            } catch {
+              terminal = { reason: 'aborted', turnCount: state.turnCount }
+              return terminal
+            }
+            llmSpan = startLLMRequestSpan({
+              model: 'claude',
+              messageCount: messageParams.length,
+              parent: interactionSpan,
+              input: messageParams,
+              systemPrompt: spanSystemPrompt,
+            })
+            continue callLoop
+          }
+          retriedError = error
+          break callLoop
+        }
+      }
+
+      if (retriedError) {
+        endLLMRequestSpan(llmSpan, { stopReason: 'error' })
+        consecutiveModelFailures++
+        const msg = getErrorMessage(retriedError)
+        const breakerTripped = consecutiveModelFailures >= MAX_CONSECUTIVE_MODEL_FAILURES
+        const suffix = breakerTripped
+          ? ` (circuit breaker tripped: ${consecutiveModelFailures} consecutive failures this turn — not retrying further)`
+          : ''
+        logForDebugging(`agent: model error — ${msg}${suffix}`, { level: 'error' })
         yield createSystemMessage({
           subtype: 'model_error',
-          content: `Model error: ${msg}`,
+          content: `Model error: ${msg}${suffix}`,
           level: 'error',
         })
         terminal = {
           reason: 'model_error',
-          error: error instanceof Error ? error : new Error(msg),
+          error: retriedError instanceof Error ? retriedError : new Error(msg),
           turnCount: state.turnCount,
         }
         return terminal
       }
+      consecutiveModelFailures = 0
 
       if (!assistantMessage) {
         endLLMRequestSpan(llmSpan, { stopReason: 'no_message' })

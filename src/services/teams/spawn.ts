@@ -2,10 +2,18 @@ import { spawn } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { PermissionMode } from '../permissions/types.js'
+import { logForDebugging } from '../observability/debug.js'
+import { shellQuote } from '../../utils/shell.js'
 import { addMember } from './team-file.js'
 import { buildAgentId, sanitizeName } from './paths.js'
 import { writeToMailbox } from './mailbox.js'
 import { TEAM_LEADER_NAME } from './types.js'
+import {
+  isInsideTmux,
+  createTeammateWindow,
+  sendCommandToWindow,
+  trackWindow,
+} from './tmuxPanes.js'
 
 export interface SpawnTeammateParams {
   teamName: string
@@ -24,6 +32,7 @@ export interface SpawnTeammateParams {
 export interface SpawnTeammateResult {
   agentId: string
   pid: number | undefined
+  windowId?: string
 }
 
 function resolveDefaultEntry(): string {
@@ -38,9 +47,37 @@ function sanitizePermissionMode(mode: PermissionMode): PermissionMode {
   return mode === 'plan' ? 'default' : mode
 }
 
+function buildTeammateArgs(ctx: {
+  entry: string
+  agentId: string
+  agentName: string
+  teamName: string
+  mode: PermissionMode
+  model?: string
+}): string[] {
+  const args = [
+    ctx.entry,
+    '--agent-id', ctx.agentId,
+    '--agent-name', ctx.agentName,
+    '--team-name', ctx.teamName,
+    '--permission-mode', ctx.mode,
+  ]
+  if (ctx.model) args.push('--model', ctx.model)
+  return args
+}
+
+function buildTeammateShellCommand(cwd: string, args: string[]): string {
+  const argv = [process.execPath, ...args].map(shellQuote).join(' ')
+  return `cd ${shellQuote(cwd)} && ${argv}`
+}
+
 /**
  * Spawn a teammate process and seed its inbox with the initial prompt.
  * Returns immediately — the caller does not wait for the teammate to finish.
+ *
+ * When the leader is running inside tmux the teammate is launched in a new
+ * tmux window so its terminal output is visible without sharing input with
+ * the leader; otherwise it is spawned as a detached background subprocess.
  */
 export async function spawnTeammate(
   params: SpawnTeammateParams,
@@ -74,17 +111,21 @@ export async function spawnTeammate(
   })
 
   const entry = params.entry ?? resolveDefaultEntry()
-  const args = [
-    entry,
-    '--agent-id', agentId,
-    '--agent-name', agentName,
-    '--team-name', teamName,
-    '--permission-mode', mode,
-  ]
-  if (params.model) args.push('--model', params.model)
+  const args = buildTeammateArgs({ entry, agentId, agentName, teamName, mode, model: params.model })
 
-  // Detached + unref so the teammate survives leader death and doesn't
-  // keep the leader's event loop open when otherwise ready to exit.
+  if (isInsideTmux()) {
+    const windowId = await createTeammateWindow(agentName)
+    await sendCommandToWindow(windowId, buildTeammateShellCommand(cwd, args))
+    trackWindow(agentId, windowId)
+    logForDebugging(
+      `teammate ${agentId} launched in tmux window ${windowId}`,
+      { level: 'info' },
+    )
+    return { agentId, pid: undefined, windowId }
+  }
+
+  // Detached + unref so the teammate survives leader death and doesn't keep
+  // the leader's event loop open when otherwise ready to exit.
   const child = spawn(process.execPath, args, {
     cwd,
     detached: true,

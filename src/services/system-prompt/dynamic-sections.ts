@@ -27,6 +27,8 @@ import { logForDebugging } from '../observability/debug.js'
 import type { ToolPermissionContext } from '../permissions/types.js'
 import { getPlanFilePath } from '../plans/index.js'
 import { getSessionId } from '../observability/state.js'
+import type { TeammateIdentity } from '../teams/identity.js'
+import { TEAM_LEADER_NAME } from '../teams/types.js'
 
 /**
  * Minimal shape for an MCP server we accept here. Real `MCPClient` types
@@ -193,6 +195,25 @@ export function getPlanModeSection(
     '- Write your plan to the plan file using the Write or Edit tools',
     '- When your plan is ready, call the ExitPlanMode tool to request user approval',
     '- If your plan is rejected, iterate on the plan file and call ExitPlanMode again',
+  ].join('\n')
+}
+
+/**
+ * Teammate-mode section. Null for leader sessions; teammates get the
+ * hand-off protocol so their REPL doesn't go idle silently after finishing.
+ */
+export function getTeammateModeSection(identity: TeammateIdentity | null): string | null {
+  if (!identity) return null
+  return [
+    '# Teammate Mode',
+    '',
+    `You are \`${identity.agentName}\` on team \`${identity.teamName}\`. Your leader is \`${TEAM_LEADER_NAME}\`.`,
+    '',
+    'Communication protocol — you MUST follow this every turn:',
+    `- When you finish a task, your FINAL action before going idle MUST be \`SendMessage(to: "${TEAM_LEADER_NAME}", message: <result or status>, summary: <5–10 words>)\`. Printing the result to your own console does not count — the leader only sees what you send.`,
+    `- When you are blocked and need input, \`SendMessage\` to \`${TEAM_LEADER_NAME}\` with the question and wait. Do not loop or guess.`,
+    '- When you receive a message, treat it as the current assignment. Reply when done.',
+    '- Never spawn further teammates; only the leader does that.',
   ].join('\n')
 }
 

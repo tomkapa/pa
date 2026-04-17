@@ -197,7 +197,8 @@ export function agentToolDef(
           })
           const totalDurationMs = Date.now() - startTime
           logForDebugging(
-            `teammate_spawn: id="${result.agentId}" pid=${result.pid ?? '?'}`,
+            `teammate_spawn: id="${result.agentId}" pid=${result.pid ?? '?'}` +
+              (result.windowId ? ` window=${result.windowId}` : ''),
             { level: 'info' },
           )
           return {
