@@ -58,6 +58,19 @@ import { webSearchToolDef } from './tools/webSearchTool.js'
 import { toolSearchToolDef } from './tools/toolSearchTool.js'
 import { skillToolDef } from './tools/skillTool.js'
 import { lspToolDef } from './tools/lspTool.js'
+import { teamCreateToolDef } from './tools/teamCreateTool.js'
+import { teamDeleteToolDef } from './tools/teamDeleteTool.js'
+import { sendMessageToolDef } from './tools/sendMessageTool.js'
+import {
+  getAgentName,
+  getTeamName,
+  isTeammate,
+  setMemberActive,
+  writeToMailbox,
+  TEAM_LEADER_NAME,
+  type TeammateMessage,
+} from './services/teams/index.js'
+import { useInboxPoller } from './hooks/useInboxPoller.js'
 import { warmupLspServer } from './lsp/manager.js'
 import { isDeferredTool } from './services/tools/deferred-tools.js'
 import { FileStateCache } from './utils/fileStateCache.js'
@@ -68,7 +81,7 @@ import { initializeToolPermissionContext } from './services/permissions/initiali
 import { createPermissionContext } from './services/permissions/context.js'
 import { cyclePermissionMode } from './services/permissions/mode-cycling.js'
 import type { ToolUseConfirm } from './services/permissions/confirm.js'
-import type { ToolPermissionContext } from './services/permissions/types.js'
+import type { ToolPermissionContext, PermissionMode } from './services/permissions/types.js'
 import {
   buildEffectiveSystemPrompt,
   getSystemPrompt,
@@ -84,6 +97,16 @@ import { CustomCommandRegistry, discoverCommandDirectories } from './services/cu
 
 const MODEL = 'claude-sonnet-4-20250514'
 const MAX_TOKENS = 8096
+
+// When a teammate starts with `--permission-mode`, we need to apply that
+// mode to the initial permission context built by `initializeToolPermissionContext`.
+function applyInitialMode(
+  ctx: ToolPermissionContext,
+  mode: PermissionMode | undefined,
+): ToolPermissionContext {
+  if (!mode || mode === ctx.mode) return ctx
+  return { ...ctx, mode }
+}
 const CURSOR_IBEAM = cursorIBeam()
 const CURSOR_DEFAULT = cursorDefault()
 
@@ -285,6 +308,13 @@ export interface REPLDeps {
   /** Custom command + skill registry (shared between SkillTool and REPL). */
   customCommandRegistry: CustomCommandRegistry
   initialPermissionContext: ToolPermissionContext
+  /**
+   * Mutable holder for the current permission mode. The REPL pushes the
+   * live mode here whenever it changes so tools built during deps creation
+   * (e.g. Agent → teammate spawning) can read the current value at call time.
+   * Optional — tests can omit this and skip permission-mode-aware tool paths.
+   */
+  permissionModeRef?: { current: PermissionMode }
   createQueryDeps: (
     abortController: AbortController,
     permissionContext: ToolPermissionContext,
@@ -349,9 +379,15 @@ function createDefaultREPLDeps(): REPLDeps {
   // tools). The agentTool captures the reference and reads it at call time.
   const agentRegistry = new AgentRegistry()
 
+  // Live permission mode — kept in sync with the REPL's useState via
+  // `syncPermissionMode` and read by tools that need to know the mode at
+  // call time (e.g. Agent when spawning a teammate).
+  const permissionModeRef: { current: PermissionMode } = { current: 'default' }
+
   const agentTool = buildTool(agentToolDef({
     tools,
     agentRegistry,
+    getPermissionMode: () => permissionModeRef.current,
     createChildQueryDeps: (opts) =>
       createQueryDeps({
         client,
@@ -366,11 +402,16 @@ function createDefaultREPLDeps(): REPLDeps {
       }),
   }))
 
+  const teamCreateTool = buildTool(teamCreateToolDef())
+  const teamDeleteTool = buildTool(teamDeleteToolDef())
+  const sendMessageTool = buildTool(sendMessageToolDef())
+
   tools.push(
     readTool, writeTool, editTool, globTool, grepTool, bashTool,
     enterPlanModeTool, exitPlanModeTool, agentTool,
     taskCreateTool, taskGetTool, taskListTool, taskUpdateTool,
     webFetchTool, webSearchTool, toolSearchTool, skillTool, lspTool,
+    teamCreateTool, teamDeleteTool, sendMessageTool,
   )
 
   // Start loading MCP tools in the background. The tools array is mutated
@@ -404,6 +445,7 @@ function createDefaultREPLDeps(): REPLDeps {
     agentRegistry,
     customCommandRegistry,
     initialPermissionContext,
+    permissionModeRef,
     summarize,
     createQueryDeps: (
       abortController: AbortController,
@@ -443,9 +485,11 @@ export interface REPLSessionBinding {
 export interface REPLProps {
   deps?: REPLDeps
   session?: REPLSessionBinding
+  /** Initial permission mode, inherited from the spawning leader for teammates. */
+  initialPermissionMode?: PermissionMode
 }
 
-export function REPL({ deps: injectedDeps, session }: REPLProps) {
+export function REPL({ deps: injectedDeps, session, initialPermissionMode }: REPLProps) {
   const { exit } = useApp()
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState<Message[]>(
@@ -524,10 +568,17 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
   // ---------------------------------------------------------------------------
 
   const [permissionContext, setPermissionContext] = useState<ToolPermissionContext>(
-    () => replDeps.initialPermissionContext,
+    () => applyInitialMode(replDeps.initialPermissionContext, initialPermissionMode),
   )
   const permissionContextRef = useRef(permissionContext)
   permissionContextRef.current = permissionContext
+  // Keep the tool-visible mode ref in sync so the Agent tool sees the
+  // user's latest mode when spawning a teammate mid-session.
+  useEffect(() => {
+    if (replDeps.permissionModeRef) {
+      replDeps.permissionModeRef.current = permissionContext.mode
+    }
+  }, [permissionContext.mode, replDeps])
 
   // ---------------------------------------------------------------------------
   // Confirmation queue — pending permission prompts
@@ -842,6 +893,50 @@ export function REPL({ deps: injectedDeps, session }: REPLProps) {
     if (!writer) return
     return () => { void writer.close() }
   }, [writer])
+
+  // Team coordination: both leaders and teammates poll their own inbox so
+  // incoming mail is delivered as a queued user prompt on the next drain.
+  // Teammates also notify the leader on exit so work can be reassigned
+  // without waiting for a no-reply timeout.
+  const teammateMode = isTeammate()
+  const teamAgentName = getAgentName() ?? TEAM_LEADER_NAME
+  const teamName = getTeamName()
+
+  const onInboxMessage = useCallback((msg: TeammateMessage) => {
+    enqueueCommand({
+      value: `[message from ${msg.from}]\n\n${msg.text}`,
+      uuid: crypto.randomUUID(),
+      mode: 'prompt',
+    })
+  }, [])
+
+  useInboxPoller({
+    agentName: teamAgentName,
+    teamName,
+    enabled: teamName !== undefined,
+    onMessage: onInboxMessage,
+  })
+
+  useEffect(() => {
+    if (!teammateMode || !teamName) return
+    // React cleanup is synchronous — fire-and-forget the async notification.
+    return () => {
+      void (async () => {
+        try {
+          await setMemberActive(teamName, teamAgentName, false)
+          await writeToMailbox(teamName, TEAM_LEADER_NAME, {
+            from: teamAgentName,
+            text: `[${teamAgentName}] agent loop exited — I'm available for new work.`,
+            timestamp: new Date().toISOString(),
+            read: false,
+            summary: 'teammate idle',
+          })
+        } catch {
+          // Leader's inbox or team file may have been deleted — ignore.
+        }
+      })()
+    }
+  }, [teammateMode, teamName, teamAgentName])
 
   return (
     <Box flexDirection="column">

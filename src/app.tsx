@@ -14,6 +14,7 @@ import {
   type SessionInfo,
 } from './services/session/index.js'
 import { getErrorMessage } from './utils/error.js'
+import type { PermissionMode } from './services/permissions/types.js'
 
 export type SessionBoot =
   | { kind: 'fresh' }
@@ -24,6 +25,8 @@ export type SessionBoot =
 export interface AppProps {
   cwd: string
   boot: SessionBoot
+  /** Initial permission mode, usually inherited by teammates from the leader. */
+  initialPermissionMode?: PermissionMode
   /** Test hook — lets callers observe the writer after boot. */
   onWriterReady?: (binding: REPLSessionBinding) => void
 }
@@ -35,7 +38,7 @@ type ResolveState =
   | { kind: 'info'; message: string; binding: REPLSessionBinding }
   | { kind: 'error'; message: string }
 
-export function App({ cwd, boot, onWriterReady }: AppProps) {
+export function App({ cwd, boot, initialPermissionMode, onWriterReady }: AppProps) {
   const [state, setState] = useState<ResolveState>({ kind: 'resolving' })
 
   useEffect(() => {
@@ -126,12 +129,12 @@ export function App({ cwd, boot, onWriterReady }: AppProps) {
     return (
       <Box flexDirection="column">
         <Text color="gray">{state.message}</Text>
-        <REPL session={state.binding} />
+        <REPL session={state.binding} initialPermissionMode={initialPermissionMode} />
       </Box>
     )
   }
 
-  return <REPL session={state.binding} />
+  return <REPL session={state.binding} initialPermissionMode={initialPermissionMode} />
 }
 
 async function openExistingSession(

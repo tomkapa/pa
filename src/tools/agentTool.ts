@@ -3,11 +3,13 @@ import type { ZodType } from 'zod'
 import type { ToolDef, ToolResultBlockParam, Tool } from '../services/tools/types.js'
 import type { QueryDeps } from '../services/agent/types.js'
 import type { AgentRegistry } from '../services/agents/registry.js'
+import type { PermissionMode } from '../services/permissions/types.js'
 import { resolveAgentTools } from '../services/agents/resolve-tools.js'
 import { query } from '../services/agent/query.js'
 import { extractTextFromContent, createUserMessage } from '../services/messages/factory.js'
 import { logForDebugging } from '../services/observability/debug.js'
 import { getErrorMessage } from '../utils/error.js'
+import { spawnTeammate } from '../services/teams/index.js'
 import {
   renderToolUseProgressMessage,
   type AgentProgress,
@@ -22,12 +24,19 @@ export interface AgentToolInput {
   prompt: string
   description: string
   subagent_type?: string
+  /** Teammate name (requires `team_name` — routes to subprocess spawning). */
+  name?: string
+  /** Target team (requires `name`). When set, spawn as a teammate process. */
+  team_name?: string
+  /** Optional model override passed to the teammate subprocess. */
+  model?: string
 }
 
 export interface AgentToolOutput {
-  status: 'completed' | 'error'
+  status: 'completed' | 'error' | 'spawned'
   content: string
   totalDurationMs: number
+  agentId?: string
 }
 
 export interface CreateChildQueryDepsOptions {
@@ -46,6 +55,8 @@ export interface AgentToolDeps {
   tools: Tool<unknown, unknown>[]
   /** Agent registry for resolving subagent_type to agent definitions. */
   agentRegistry?: AgentRegistry
+  /** Current permission mode — teammates inherit this by default. */
+  getPermissionMode?: () => PermissionMode
 }
 
 // ---------------------------------------------------------------------------
@@ -96,6 +107,16 @@ export function agentToolDef(
         subagent_type: z.string().optional().describe(
           'The type of specialized agent to use for this task',
         ),
+        name: z.string().optional().describe(
+          'Teammate name. When set with `team_name`, spawns a persistent teammate ' +
+          'process in the named team instead of running a one-shot sub-agent.',
+        ),
+        team_name: z.string().optional().describe(
+          'Team the teammate joins. Create teams via TeamCreate first.',
+        ),
+        model: z.string().optional().describe(
+          'Optional model override for the spawned teammate.',
+        ),
       }) as ZodType<AgentToolInput>
     },
 
@@ -138,6 +159,9 @@ export function agentToolDef(
     },
 
     async description(input) {
+      if (input.name && input.team_name) {
+        return `Spawn teammate ${input.name}@${input.team_name}: ${input.description}`
+      }
       const agentLabel = input.subagent_type
         ? `Agent(${input.subagent_type})`
         : 'Agent'
@@ -145,13 +169,76 @@ export function agentToolDef(
     },
 
     userFacingName(input) {
+      if (input.name && input.team_name) {
+        return `Agent(spawn ${input.name}@${input.team_name})`
+      }
       if (input.subagent_type) return `Agent(${input.subagent_type}: ${input.description ?? ''})`
       return input.description ? `Agent(${input.description})` : 'Agent'
     },
 
     async call(input, context) {
-      const { prompt, description, subagent_type } = input
+      const { prompt, description, subagent_type, name, team_name, model } = input
       const startTime = Date.now()
+
+      // Teammate spawn: `name` + `team_name` route to a separate process
+      // that runs its own agent loop and communicates via the team's
+      // mailbox. Returns immediately; the caller coordinates via
+      // SendMessage / inbox polling.
+      if (name && team_name) {
+        try {
+          const permissionMode = deps.getPermissionMode?.() ?? 'default'
+          const result = await spawnTeammate({
+            teamName: team_name,
+            name,
+            agentType: subagent_type,
+            model,
+            initialPrompt: prompt,
+            permissionMode,
+          })
+          const totalDurationMs = Date.now() - startTime
+          logForDebugging(
+            `teammate_spawn: id="${result.agentId}" pid=${result.pid ?? '?'}`,
+            { level: 'info' },
+          )
+          return {
+            data: {
+              status: 'spawned',
+              content:
+                `Teammate "${result.agentId}" spawned. ` +
+                `Initial prompt delivered to inbox. ` +
+                `Use SendMessage to talk to them; watch your inbox for replies.`,
+              totalDurationMs,
+              agentId: result.agentId,
+            },
+          }
+        } catch (error: unknown) {
+          const totalDurationMs = Date.now() - startTime
+          const errorMsg = getErrorMessage(error)
+          logForDebugging(
+            `teammate_spawn_error: team="${team_name}" name="${name}" error="${errorMsg}"`,
+            { level: 'error' },
+          )
+          return {
+            data: {
+              status: 'error',
+              content: `Teammate spawn failed: ${errorMsg}`,
+              totalDurationMs,
+            },
+          }
+        }
+      }
+
+      if (name || team_name) {
+        return {
+          data: {
+            status: 'error',
+            content:
+              'Teammate spawning requires both `name` and `team_name`. ' +
+              'Omit both for a one-shot sub-agent.',
+            totalDurationMs: Date.now() - startTime,
+          },
+        }
+      }
 
       const childAbort = new AbortController()
       const onParentAbort = () => childAbort.abort()

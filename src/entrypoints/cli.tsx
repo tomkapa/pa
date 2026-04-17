@@ -5,6 +5,9 @@ import type { REPLSessionBinding } from '../repl.js'
 import { shutdownAllMcpServers } from '../services/mcp/index.js'
 import { getErrorMessage } from '../utils/error.js'
 import { PA_VERSION } from '../version.js'
+import { setTeammateIdentity } from '../services/teams/index.js'
+import type { PermissionMode } from '../services/permissions/types.js'
+import { PERMISSION_MODES } from '../services/permissions/types.js'
 
 function parseBoot(options: { continue?: boolean; resume?: string | boolean }): SessionBoot {
   const hasContinue = options.continue === true
@@ -21,6 +24,38 @@ function parseBoot(options: { continue?: boolean; resume?: string | boolean }): 
       : { kind: 'resume-pick' }
   }
   return { kind: 'fresh' }
+}
+
+interface TeammateFlags {
+  agentId?: string
+  agentName?: string
+  teamName?: string
+  permissionMode?: string
+  model?: string
+}
+
+function applyTeammateIdentity(flags: TeammateFlags): void {
+  if (!flags.agentId && !flags.agentName && !flags.teamName) return
+  if (!flags.agentId || !flags.agentName || !flags.teamName) {
+    throw new Error(
+      'Teammate mode requires all of --agent-id, --agent-name, and --team-name.',
+    )
+  }
+  setTeammateIdentity({
+    agentId: flags.agentId,
+    agentName: flags.agentName,
+    teamName: flags.teamName,
+  })
+}
+
+function validatePermissionMode(mode: string | undefined): PermissionMode | undefined {
+  if (!mode) return undefined
+  if (!(PERMISSION_MODES as readonly string[]).includes(mode)) {
+    throw new Error(
+      `Invalid --permission-mode '${mode}'. Allowed: ${PERMISSION_MODES.join(', ')}.`,
+    )
+  }
+  return mode as PermissionMode
 }
 
 // React's unmount hook is synchronous, so we track the writer binding here
@@ -48,6 +83,16 @@ async function drainAndExit(code: number): Promise<void> {
 process.on('SIGINT', () => { void drainAndExit(130) })
 process.on('SIGTERM', () => { void drainAndExit(143) })
 
+interface CliOptions {
+  continue?: boolean
+  resume?: string | boolean
+  agentId?: string
+  agentName?: string
+  teamName?: string
+  permissionMode?: string
+  model?: string
+}
+
 const program = new Command()
   .name('pa')
   .version(PA_VERSION)
@@ -56,10 +101,22 @@ const program = new Command()
   .addOption(
     new Option('-r, --resume [session-id]', 'Resume a session (interactive picker if no id given)'),
   )
-  .action(async (options: { continue?: boolean; resume?: string | boolean }) => {
+  .option('--agent-id <id>', 'Internal: teammate identity (use with --agent-name, --team-name)')
+  .option('--agent-name <name>', 'Internal: teammate name within its team')
+  .option('--team-name <name>', 'Internal: team this teammate belongs to')
+  .option('--permission-mode <mode>', 'Initial permission mode for this session')
+  .option('--model <model>', 'Model override for this session')
+  .action(async (options: CliOptions) => {
     let boot: SessionBoot
+    let initialPermissionMode: PermissionMode | undefined
     try {
       boot = parseBoot(options)
+      applyTeammateIdentity({
+        agentId: options.agentId,
+        agentName: options.agentName,
+        teamName: options.teamName,
+      })
+      initialPermissionMode = validatePermissionMode(options.permissionMode)
     } catch (error: unknown) {
       process.stderr.write(`pa: ${getErrorMessage(error)}\n`)
       process.exit(2)
@@ -70,6 +127,7 @@ const program = new Command()
       <App
         cwd={process.cwd()}
         boot={boot}
+        initialPermissionMode={initialPermissionMode}
         onWriterReady={(binding) => { activeBinding = binding }}
       />,
     )
